@@ -97,13 +97,21 @@ const unsubscribe = db.collection('notification_requests')
           console.log('   🔑 FCM Token:', fcmToken.substring(0, 20) + '...');
           
           // Prepare FCM message
+          // Convert all data values to strings (FCM requirement)
+          const stringifiedData = {};
+          if (notification.data) {
+            for (const [key, value] of Object.entries(notification.data)) {
+              stringifiedData[key] = String(value);
+            }
+          }
+          
           const message = {
             token: fcmToken,
             notification: {
               title: notification.title,
               body: notification.body,
             },
-            data: notification.data || {},
+            data: stringifiedData,
             android: {
               priority: 'high',
               notification: {
