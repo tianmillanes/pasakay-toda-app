@@ -20,7 +20,17 @@ const path = require('path');
 
 // Initialize Firebase Admin SDK
 try {
-  const serviceAccount = require('./serviceAccountKey.json');
+  let serviceAccount;
+  
+  // Try to read from environment variable first (for Railway/Render deployment)
+  if (process.env.SERVICE_ACCOUNT_JSON) {
+    console.log('📦 Reading service account from environment variable...');
+    serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+  } else {
+    // Fallback to local file (for local development)
+    console.log('📦 Reading service account from file...');
+    serviceAccount = require('./serviceAccountKey.json');
+  }
   
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -29,7 +39,9 @@ try {
   console.log('✅ Firebase Admin initialized successfully');
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
-  console.error('Make sure serviceAccountKey.json exists in this directory');
+  console.error('Make sure either:');
+  console.error('  1. SERVICE_ACCOUNT_JSON environment variable is set, OR');
+  console.error('  2. serviceAccountKey.json exists in this directory');
   process.exit(1);
 }
 
