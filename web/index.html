@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="toda">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>YourApp</title>
+  <link rel="manifest" href="manifest.json">
+  
+  <style>
+    /* Hide Flutter web debug overlays */
+    .flutter-debug-overlay,
+    .flutter-debug-banner,
+    [data-debug="true"],
+    .debug-overlay {
+      display: none !important;
+      visibility: hidden !important;
+    }
+    
+    /* Ensure full viewport usage */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    
+    /* Hide any yellow debug banners */
+    div[style*="background-color: rgb(255, 255, 0)"],
+    div[style*="background: yellow"],
+    .debug-banner {
+      display: none !important;
+    }
+  </style>
+  
+  <!-- Firebase Cloud Messaging Service Worker Registration -->
+  <script>
+    // Register FCM service worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+          scope: '/firebase-cloud-messaging-push-scope',
+        }).then(function(registration) {
+          console.log('✅ FCM Service Worker registered successfully:', registration.scope);
+        }).catch(function(error) {
+          console.error('❌ FCM Service Worker registration failed:', error);
+        });
+      });
+    } else {
+      console.warn('⚠️ Service Workers not supported in this browser');
+    }
+    
+    // Request notification permission early
+    if ('Notification' in window && 'serviceWorker' in navigator) {
+      Notification.requestPermission().then(function(permission) {
+        console.log('📱 Notification permission:', permission);
+      });
+    }
+  </script>
+</head>
+<body>
+  <!-- Google Maps JavaScript API -->
+  <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDhsS5TahdyUKJl61qR1swg9vLpFNL3U1Q&libraries=places">
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

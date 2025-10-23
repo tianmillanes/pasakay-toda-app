@@ -1,0 +1,24 @@
+{
+  "name": "toda-notification-backend",
+  "version": "1.0.0",
+  "description": "Free push notification backend for TODA ride-booking app",
+  "main": "notification_sender.js",
+  "scripts": {
+    "start": "node notification_sender.js",
+    "dev": "nodemon notification_sender.js"
+  },
+  "keywords": [
+    "firebase",
+    "fcm",
+    "push-notifications",
+    "toda"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}
