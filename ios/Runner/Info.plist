@@ -45,5 +45,45 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- HTTPS Enforcement Configuration -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Disable cleartext traffic globally -->
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<!-- Exception domains for specific services (if needed) -->
+		<key>NSExceptionDomains</key>
+		<dict>
+			<!-- Localhost for development/testing only -->
+			<key>localhost</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSTemporaryExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+			<!-- 127.0.0.1 for development/testing only -->
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSTemporaryExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+		</key>
+		<!-- Minimum TLS version: 1.2 (recommended) or 1.3 (best) -->
+		<key>NSMinimumTLSVersion</key>
+		<string>TLSv1.2</string>
+	</dict>
+	
+	<!-- Support for phone calls (URL scheme) -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tel</string>
+	</array>
 </dict>
 </plist>

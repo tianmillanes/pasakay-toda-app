@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../widgets/common/animated_map_button.dart';
+import '../../models/lat_lng.dart';
 import 'package:provider/provider.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
+import '../../widgets/location_helpers.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../services/location_service.dart';
 import '../../widgets/usability_helpers.dart';
+import '../../config/credentials_config.dart';
 
 class MapSelectionScreen extends StatefulWidget {
   final String title;
@@ -21,48 +26,73 @@ class MapSelectionScreen extends StatefulWidget {
 }
 
 class _MapSelectionScreenState extends State<MapSelectionScreen> {
-  GoogleMapController? _mapController;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.CircleAnnotationManager? _circleAnnotationManager;
+  mapbox.CircleAnnotationManager? _userLocationAnnotationManager; // User location marker
+  mapbox.PolygonAnnotationManager? _polygonAnnotationManager;
+  mapbox.PolylineAnnotationManager? _lineAnnotationManager;
+  
   LatLng? _selectedLocation;
   LatLng? _currentLocation;
   String _selectedAddress = '';
   bool _isLoadingAddress = false;
-
-  final Set<Marker> _markers = {};
-  final Set<Polygon> _polygons = {};
 
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation;
     _getCurrentLocation();
-    _loadServiceAreaBoundary();
     if (_selectedLocation != null) {
       _getAddressForLocation(_selectedLocation!);
     }
   }
 
   Future<void> _getCurrentLocation() async {
-    final locationService = Provider.of<LocationService>(
-      context,
-      listen: false,
-    );
-    final position = await locationService.getCurrentLocation();
+    try {
+      final locationService = Provider.of<LocationService>(
+        context,
+        listen: false,
+      );
+      final position = await locationService.getCurrentLocation();
 
-    if (position != null && mounted) {
-      final latLng = LatLng(position.latitude, position.longitude);
+      if (position != null && mounted) {
+        final latLng = LatLng(position.latitude, position.longitude);
 
-      setState(() {
-        _currentLocation = latLng;
-      });
+        setState(() {
+          _currentLocation = latLng;
+        });
 
-      // If no initial location, center on current location
-      if (widget.initialLocation == null) {
-        _mapController?.animateCamera(CameraUpdate.newLatLngZoom(latLng, 16));
+        // Show user location marker (Google Maps style)
+        _updateUserLocationMarker(latLng);
+
+        // If no initial location, center on current location
+        if (widget.initialLocation == null && _mapboxMap != null) {
+          _mapboxMap?.setCamera(
+            mapbox.CameraOptions(
+              center: mapbox.Point(coordinates: mapbox.Position(latLng.longitude, latLng.latitude)),
+              zoom: 16.0,
+            ),
+          );
+        }
+      }
+    } on LocationServiceException catch (_) {
+      if (mounted) {
+        LocationHelpers.showLocationDisabledDialog(context);
+      }
+    } on LocationPermissionException catch (e) {
+      if (mounted) {
+        _showPermissionDeniedDialog(e.toString());
+      }
+    } catch (e) {
+      if (mounted) {
+        SnackbarHelper.showError(context, 'Could not get current location: $e');
       }
     }
   }
 
   Future<void> _loadServiceAreaBoundary() async {
+    if (_mapboxMap == null) return;
+
     final locationService = Provider.of<LocationService>(
       context,
       listen: false,
@@ -71,54 +101,68 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
 
     if (barangayGeofence != null && barangayGeofence.isNotEmpty) {
       final polygonPoints = barangayGeofence
-          .map((coord) => LatLng(coord[0], coord[1]))
+          .map((coord) => [coord[1], coord[0]]) // Mapbox uses [lng, lat]
           .toList();
 
-      setState(() {
-        _polygons.add(
-          Polygon(
-            polygonId: const PolygonId('service_area'),
-            points: polygonPoints,
-            strokeColor: Colors.blue,
-            strokeWidth: 2,
-            fillColor: Colors.blue.withOpacity(0.1),
-          ),
-        );
-      });
+      if (polygonPoints.first[0] != polygonPoints.last[0] || polygonPoints.first[1] != polygonPoints.last[1]) {
+        polygonPoints.add(polygonPoints.first);
+      }
+
+      if (_polygonAnnotationManager == null) {
+        _polygonAnnotationManager = await _mapboxMap!.annotations.createPolygonAnnotationManager();
+      }
+
+      final positions = polygonPoints.map((p) => mapbox.Position(p[0], p[1])).toList();
+
+      await _polygonAnnotationManager!.create(
+        mapbox.PolygonAnnotationOptions(
+          geometry: mapbox.Polygon(coordinates: [positions]),
+          fillColor: Colors.green.withOpacity(0.1).value,
+          fillOutlineColor: Colors.green.value,
+        ),
+      );
     }
   }
 
-  void _onMapCreated(GoogleMapController controller) {
-    _mapController = controller;
+  void _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    
+    _circleAnnotationManager = await mapboxMap.annotations.createCircleAnnotationManager();
+    _userLocationAnnotationManager = await mapboxMap.annotations.createCircleAnnotationManager();
+    _polygonAnnotationManager = await mapboxMap.annotations.createPolygonAnnotationManager();
+    _lineAnnotationManager = await mapboxMap.annotations.createPolylineAnnotationManager();
+
     _getCurrentLocation();
+    _loadServiceAreaBoundary();
+
+    // Show user's current location marker if available
+    if (_currentLocation != null) {
+      _updateUserLocationMarker(_currentLocation!);
+    }
 
     // Add initial marker if location exists
     if (_selectedLocation != null) {
       _updateMarker(_selectedLocation!);
+      
+      _mapboxMap?.setCamera(
+        mapbox.CameraOptions(
+          center: mapbox.Point(coordinates: mapbox.Position(_selectedLocation!.longitude, _selectedLocation!.latitude)),
+          zoom: 16.0,
+        ),
+      );
+    } else if (_currentLocation != null) {
+      _mapboxMap?.setCamera(
+        mapbox.CameraOptions(
+          center: mapbox.Point(coordinates: mapbox.Position(_currentLocation!.longitude, _currentLocation!.latitude)),
+          zoom: 16.0,
+        ),
+      );
     }
   }
 
-  void _onMapTapped(LatLng location) async {
-    final locationService = Provider.of<LocationService>(
-      context,
-      listen: false,
-    );
-
-    // STRICT VALIDATION: Check if pickup location is within service area
-    if (widget.isPickupLocation) {
-      if (!locationService.isInBarangayGeofence(
-        location.latitude,
-        location.longitude,
-      )) {
-        SnackbarHelper.showError(
-          context,
-          'This location is outside the service area. Please select a pickup location inside the barangay.',
-          seconds: 4,
-        );
-        return; // Block the selection
-      }
-    }
-
+  void _onMapTapped(mapbox.MapContentGestureContext context) {
+    final location = LatLng(context.point.coordinates.lat.toDouble(), context.point.coordinates.lng.toDouble());
+    
     setState(() {
       _selectedLocation = location;
     });
@@ -127,26 +171,27 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
     _getAddressForLocation(location);
   }
 
-  void _updateMarker(LatLng location) {
-    setState(() {
-      _markers.clear();
-      _markers.add(
-        Marker(
-          markerId: const MarkerId('selected'),
-          position: location,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            widget.isPickupLocation
-                ? BitmapDescriptor.hueGreen
-                : BitmapDescriptor.hueRed,
-          ),
-          infoWindow: InfoWindow(
-            title: widget.isPickupLocation
-                ? 'Pickup Location'
-                : 'Dropoff Location',
-          ),
-        ),
-      );
-    });
+  Future<void> _updateMarker(LatLng location) async {
+    if (_circleAnnotationManager == null) return;
+    
+    await _circleAnnotationManager!.deleteAll();
+    
+    final color = widget.isPickupLocation ? const Color(0xFF4CAF50) : const Color(0xFFF44336);
+    
+    await _circleAnnotationManager!.create(
+      mapbox.CircleAnnotationOptions(
+        geometry: mapbox.Point(coordinates: mapbox.Position(location.longitude, location.latitude)),
+        circleRadius: 8.0,
+        circleColor: color.value,
+        circleStrokeWidth: 2.0,
+        circleStrokeColor: Colors.white.value,
+      ),
+    );
+  }
+
+  // Add user location marker (Google Maps style blue dot)
+  Future<void> _updateUserLocationMarker(LatLng location) async {
+    // User location marker removed as requested
   }
 
   Future<void> _getAddressForLocation(LatLng location) async {
@@ -163,34 +208,16 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
       location.longitude,
     );
 
-    setState(() {
-      _selectedAddress = address;
-      _isLoadingAddress = false;
-    });
+    if (mounted) {
+      setState(() {
+        _selectedAddress = address;
+        _isLoadingAddress = false;
+      });
+    }
   }
 
   void _useCurrentLocation() async {
     if (_currentLocation == null) return;
-
-    final locationService = Provider.of<LocationService>(
-      context,
-      listen: false,
-    );
-
-    // STRICT VALIDATION: Check if current location is within service area (for pickup only)
-    if (widget.isPickupLocation) {
-      if (!locationService.isInBarangayGeofence(
-        _currentLocation!.latitude,
-        _currentLocation!.longitude,
-      )) {
-        SnackbarHelper.showError(
-          context,
-          'Your current location is outside the service area. You can only book rides from inside the barangay.',
-          seconds: 4,
-        );
-        return; // Block using current location
-      }
-    }
 
     setState(() {
       _selectedLocation = _currentLocation;
@@ -199,8 +226,12 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
     _updateMarker(_currentLocation!);
     _getAddressForLocation(_currentLocation!);
 
-    _mapController?.animateCamera(
-      CameraUpdate.newLatLngZoom(_currentLocation!, 16),
+    _mapboxMap?.flyTo(
+      mapbox.CameraOptions(
+        center: mapbox.Point(coordinates: mapbox.Position(_currentLocation!.longitude, _currentLocation!.latitude)),
+        zoom: 16.0,
+      ),
+      mapbox.MapAnimationOptions(duration: 1000),
     );
   }
 
@@ -211,25 +242,6 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
         'Please select a location on the map',
       );
       return;
-    }
-
-    // FINAL VALIDATION: Double-check geofence before confirming pickup location
-    if (widget.isPickupLocation) {
-      final locationService = Provider.of<LocationService>(
-        context,
-        listen: false,
-      );
-      if (!locationService.isInBarangayGeofence(
-        _selectedLocation!.latitude,
-        _selectedLocation!.longitude,
-      )) {
-        SnackbarHelper.showError(
-          context,
-          '🚫 Selected pickup location is outside the service area. Please choose a location inside the barangay.',
-          seconds: 4,
-        );
-        return; // Block confirmation
-      }
     }
 
     Navigator.of(
@@ -257,21 +269,14 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
       body: Stack(
         children: [
           // Map
-          GoogleMap(
+          mapbox.MapWidget(
+            key: const ValueKey("mapbox_selection"),
             onMapCreated: _onMapCreated,
-            onTap: _onMapTapped,
-            markers: _markers,
-            polygons: _polygons,
-            initialCameraPosition: CameraPosition(
-              target:
-                  widget.initialLocation ??
-                  _currentLocation ??
-                  const LatLng(15.4817, 120.5979),
-              zoom: 16,
+            onTapListener: _onMapTapped,
+            cameraOptions: mapbox.CameraOptions(
+              center: mapbox.Point(coordinates: mapbox.Position(120.5979, 15.4817)),
+              zoom: 16.0,
             ),
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: true,
           ),
 
           // Instructions at top
@@ -304,7 +309,7 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
                             : Icons.location_on,
                         color: widget.isPickupLocation
                             ? const Color(0xFF4CAF50)
-                            : const Color(0xFFFF5252),
+                            : const Color(0xFFF44336),
                         size: 20,
                       ),
                       const SizedBox(width: 8),
@@ -330,16 +335,16 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
                           width: 12,
                           height: 12,
                           decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.1),
-                            border: Border.all(color: Colors.blue, width: 2),
+                            color: Colors.green.withOpacity(0.1),
+                            border: Border.all(color: Colors.green, width: 2),
                             borderRadius: BorderRadius.circular(3),
                           ),
                         ),
                         const SizedBox(width: 8),
                         const Text(
-                          'Pickup must be within service area',
+                          'Pickup from anywhere',
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             color: Color(0xFF757575),
                           ),
                         ),
@@ -358,13 +363,13 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
               left: 0,
               right: 0,
               child: Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 6,
                       offset: const Offset(0, -2),
                     ),
                   ],
@@ -382,9 +387,9 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
                           color: widget.isPickupLocation
                               ? const Color(0xFF4CAF50)
                               : const Color(0xFFFF5252),
-                          size: 20,
+                          size: 18,
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -394,9 +399,9 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
                                     ? 'Pickup Location'
                                     : 'Dropoff Location',
                                 style: const TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 11,
                                   color: Color(0xFF757575),
-                                  fontWeight: FontWeight.w500,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -456,7 +461,48 @@ class _MapSelectionScreenState extends State<MapSelectionScreen> {
 
   @override
   void dispose() {
-    _mapController?.dispose();
+    _circleAnnotationManager = null;
+    _polygonAnnotationManager = null;
+    _lineAnnotationManager = null;
     super.dispose();
+  }
+
+  void _showPermissionDeniedDialog(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.location_disabled, color: Colors.orange, size: 24),
+            const SizedBox(width: 8),
+            const Text('Location Permission Required'),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              // Open app settings
+              await Geolocator.openAppSettings();
+              // Try getting location again after settings are opened
+              Future.delayed(const Duration(seconds: 2), () {
+                if (mounted) _getCurrentLocation();
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2D2D2D),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
   }
 }

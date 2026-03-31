@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/barangay_service.dart';
 import '../../models/user_model.dart';
 import '../../models/driver_model.dart';
+import '../../models/barangay_model.dart';
 import '../../widgets/usability_helpers.dart';
+import '../../widgets/barangay_selector.dart';
 
 class DriverRegisterScreen extends StatefulWidget {
   const DriverRegisterScreen({super.key});
@@ -27,6 +30,16 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   final String _vehicleType = 'Tricycle'; // Hardcoded for tricycle-only app
+  BarangayModel? _selectedBarangay;
+
+  late BarangayService _barangayService;
+
+  @override
+  void initState() {
+    super.initState();
+    _barangayService = BarangayService();
+    _barangayService.initializeBarangays();
+  }
 
   @override
   void dispose() {
@@ -43,6 +56,12 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Validate barangay selection
+    if (_selectedBarangay == null) {
+      SnackbarHelper.showError(context, 'Please select a barangay');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
@@ -51,6 +70,12 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
       final authService = Provider.of<AuthService>(context, listen: false);
       final firestoreService = Provider.of<FirestoreService>(context, listen: false);
 
+      // Check if email or phone is already registered before proceeding
+      await authService.checkIfEmailOrPhoneExists(
+        _emailController.text.trim(),
+        _phoneController.text.trim(),
+      );
+
       // Create user account first
       await authService.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
@@ -58,6 +83,8 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         name: _nameController.text.trim(),
         phone: _phoneController.text.trim(),
         role: UserRole.driver,
+        barangayId: _selectedBarangay!.id,
+        barangayName: _selectedBarangay!.name,
       );
 
       // Create driver profile with vehicle information
@@ -68,6 +95,8 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         vehicleType: _vehicleType,
         plateNumber: _plateNumberController.text.trim().toUpperCase(),
         licenseNumber: _licenseNumberController.text.trim().toUpperCase(),
+        barangayId: _selectedBarangay!.id,
+        barangayName: _selectedBarangay!.name,
       );
 
       await firestoreService.createDriverProfile(driverModel);
@@ -82,7 +111,10 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
       }
     } catch (e) {
       if (mounted) {
-        SnackbarHelper.showError(context, 'Registration failed: ${e.toString()}');
+        String errorMessage = e.toString();
+        // Remove Firebase error codes like [firebase_auth/email-already-in-use]
+        errorMessage = errorMessage.replaceAll(RegExp(r'\[firebase_auth/[^\]]+\]'), '').trim();
+        SnackbarHelper.showError(context, 'Registration failed: $errorMessage');
       }
     } finally {
       if (mounted) {
@@ -215,12 +247,13 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     hintText: 'e.g., juan@email.com',
+                    helperText: 'We\'ll verify this email for security',
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Please enter your email';
                     }
-                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                    if (!RegExp(r'^[\w\-\.\+]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
                       return 'Please enter a valid email address';
                     }
                     return null;
@@ -241,7 +274,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     hintText: 'e.g., +639123456789',
-                    helperText: 'Passengers will use this to contact you',
+                    
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -279,14 +312,14 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                     ),
                     filled: true,
                     fillColor: Colors.white,
-                    helperText: 'Minimum 6 characters',
+                    helperText: 'Minimum 8 characters',
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Please enter a password';
                     }
-                    if (value.length < 6) {
-                      return 'Password must be at least 6 characters';
+                    if (value.length < 8) {
+                      return 'Password must be at least 8 characters';
                     }
                     return null;
                   },
@@ -425,6 +458,21 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                       ),
                     ],
                   ),
+                ),
+
+                const SizedBox(height: 16),
+                const Text(
+                  'Barangay',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                BarangaySelector(
+                  selectedBarangay: _selectedBarangay,
+                  onBarangaySelected: (barangay) {
+                    setState(() {
+                      _selectedBarangay = barangay;
+                    });
+                  },
                 ),
 
                 const SizedBox(height: 24),

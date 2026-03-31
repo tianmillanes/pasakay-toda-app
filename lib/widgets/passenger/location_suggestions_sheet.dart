@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../models/lat_lng.dart';
 import 'package:provider/provider.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../services/location_service.dart';
 import '../../services/location_storage_service.dart';
 import '../../utils/app_theme.dart';
+import '../../widgets/location_helpers.dart';
 
 class LocationSuggestionsSheet extends StatefulWidget {
   final Function(String address, LatLng location) onLocationSelected;
@@ -74,6 +76,20 @@ class _LocationSuggestionsSheetState extends State<LocationSuggestionsSheet> wit
           _currentAddress = address;
           _isLoadingCurrentLocation = false;
         });
+      }
+    } on LocationServiceException catch (_) {
+      if (mounted) {
+        setState(() {
+          _isLoadingCurrentLocation = false;
+        });
+        LocationHelpers.showLocationDisabledDialog(context);
+      }
+    } on LocationPermissionException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingCurrentLocation = false;
+        });
+        _showPermissionDeniedDialog(e.toString());
       }
     } catch (e) {
       if (mounted) {
@@ -481,6 +497,45 @@ class _LocationSuggestionsSheetState extends State<LocationSuggestionsSheet> wit
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showPermissionDeniedDialog(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.location_disabled, color: Colors.orange, size: 24),
+            const SizedBox(width: 8),
+            const Text('Location Permission Required'),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              // Open app settings
+              await Geolocator.openAppSettings();
+              // Try getting location again after settings are opened
+              Future.delayed(const Duration(seconds: 2), () {
+                if (mounted) _getCurrentLocation();
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2D2D2D),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Settings'),
+          ),
+        ],
       ),
     );
   }

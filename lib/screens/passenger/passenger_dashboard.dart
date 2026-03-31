@@ -1,18 +1,30 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/location_service.dart';
 import '../../models/ride_model.dart';
+import '../../models/pasabuy_model.dart';
+import '../../models/user_model.dart';
 import '../../utils/app_theme.dart';
-import '../../widgets/passenger/stats_card.dart';
-import '../../widgets/passenger/recent_destinations_card.dart';
+import '../../utils/responsive_utils.dart';
+
 import '../../widgets/common/animated_page_transition.dart';
 import '../../widgets/usability_helpers.dart';
+import '../../widgets/custom_appbars.dart';
+import '../../widgets/location_helpers.dart';
+import '../../services/fare_service.dart';
 import 'book_ride_screen.dart';
-import 'ride_history_screen.dart';
+import 'history_hub_screen.dart';
 import 'active_ride_screen.dart';
+import 'pasabuy_screen.dart';
+import 'pasabuy_waiting_screen.dart';
+import 'package:geolocator/geolocator.dart';
+import '../../services/id_verification_service.dart';
+import '../auth/standalone_id_verification_screen.dart';
 
 class PassengerDashboard extends StatefulWidget {
   const PassengerDashboard({super.key});
@@ -24,47 +36,305 @@ class PassengerDashboard extends StatefulWidget {
 class _PassengerDashboardState extends State<PassengerDashboard> {
   int _currentIndex = 0;
   RideModel? _activeRide;
+  PasaBuyModel? _activePasaBuy;
   List<Map<String, dynamic>> _onlineDrivers = [];
   bool _isCheckingDrivers = false;
   bool _isMaintenanceMode = false;
+  final Set<String> _ignoredRideIds = {};
 
   // Stream subscriptions for proper disposal
   final List<StreamSubscription> _subscriptions = [];
+
+  List<RideModel> _recentRides = [];
+  StreamSubscription? _recentRidesSubscription;
 
   @override
   void initState() {
     super.initState();
     _initializeNotifications();
     _checkActiveRide();
+    _checkActivePasaBuy();
     _checkOnlineDrivers();
+    _startAutomaticDriverCheck();
     _listenToNotifications();
     _checkMaintenanceMode();
+    _listenToRecentRides();
+    _listenToFareUpdates();
+  }
+
+  void _listenToFareUpdates() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final uid = authService.currentUser?.uid;
+    if (uid == null) return;
+
+    final subscription = FareService.fareRulesStream.listen((snapshot) async {
+      if (snapshot.exists && snapshot.data() != null) {
+        final data = snapshot.data()!;
+        final updatedAt = data['updatedAt'] as Timestamp?;
+
+        if (updatedAt != null) {
+          final fareUpdateTime = updatedAt.toDate();
+
+          // Get user's last seen fare update from their Firestore doc
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .get();
+          final userData = userDoc.data();
+          final lastSeenTs = userData?['lastSeenFareUpdate'] as Timestamp?;
+          final lastSeen = lastSeenTs?.toDate();
+
+          // Show popup if user has never seen an update, or fare is newer
+          if (lastSeen == null || fareUpdateTime.isAfter(lastSeen)) {
+            if (mounted) {
+              _showFareUpdatedDialog(data);
+              // Mark as seen
+              await FirebaseFirestore.instance.collection('users').doc(uid).set(
+                  {'lastSeenFareUpdate': updatedAt}, SetOptions(merge: true));
+            }
+          }
+        }
+      }
+    });
+    _subscriptions.add(subscription);
+  }
+
+  void _showFareUpdatedDialog(Map<String, dynamic> fareData) {
+    final baseFare = (fareData['baseFare'] ?? 20.0).toDouble();
+    final firstTwoKmFare = (fareData['firstTwoKmFare'] ?? 20.0).toDouble();
+    final farePer500m = (fareData['farePer500m'] ?? 10.0).toDouble();
+    final minimumFare = (fareData['minimumFare'] ?? 20.0).toDouble();
+    final surgeMultiplier = (fareData['surgeMultiplier'] ?? 1.0).toDouble();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+        title: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryGreenLight,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.price_change_rounded,
+                  color: AppTheme.primaryGreen, size: 32),
+            ),
+            const SizedBox(height: 12),
+            const Text('Fare Rates Updated',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 4),
+            const Text(
+              'Admin has updated the fare structure. Below are the new rates effective immediately.',
+              style: TextStyle(
+                  fontWeight: FontWeight.w400,
+                  fontSize: 13,
+                  color: AppTheme.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        content: Container(
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppTheme.backgroundLight,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _fareAdvisoryRow('Base Fare', '₱${baseFare.toStringAsFixed(2)}'),
+              const Divider(height: 16, color: AppTheme.borderLight),
+              _fareAdvisoryRow(
+                  'First 2km', '₱${firstTwoKmFare.toStringAsFixed(2)}'),
+              const Divider(height: 16, color: AppTheme.borderLight),
+              _fareAdvisoryRow(
+                  'Per 500m (after 2km)', '₱${farePer500m.toStringAsFixed(2)}'),
+              const Divider(height: 16, color: AppTheme.borderLight),
+              _fareAdvisoryRow(
+                  'Minimum Fare', '₱${minimumFare.toStringAsFixed(2)}'),
+              if (surgeMultiplier > 1.0) ...[
+                const Divider(height: 16, color: AppTheme.borderLight),
+                _fareAdvisoryRow('⚡ Surge Multiplier',
+                    '${surgeMultiplier.toStringAsFixed(1)}x',
+                    highlight: true),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryGreen,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('I Understand',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fareAdvisoryRow(String label, String value,
+      {bool highlight = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color:
+                  highlight ? Colors.orange.shade700 : AppTheme.textSecondary,
+            )),
+        Text(value,
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 15,
+              color: highlight ? Colors.orange.shade700 : AppTheme.textPrimary,
+            )),
+      ],
+    );
+  }
+
+  void _listenToRecentRides() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final firestoreService =
+        Provider.of<FirestoreService>(context, listen: false);
+    final currentUser = authService.currentUser;
+    if (currentUser == null) return;
+
+    _recentRidesSubscription =
+        firestoreService.getUserRides(currentUser.uid).listen((rides) {
+      if (mounted) {
+        setState(() {
+          // Filter out active rides and take the 3 most recent completed/cancelled ones
+          _recentRides = rides
+              .where((ride) =>
+                  ride.status == RideStatus.completed ||
+                  ride.status == RideStatus.cancelled)
+              .take(3)
+              .toList();
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
-    // Cancel all stream subscriptions to prevent memory leaks
     for (var subscription in _subscriptions) {
       subscription.cancel();
     }
     _subscriptions.clear();
+    _recentRidesSubscription?.cancel();
     super.dispose();
   }
 
-  /// Notification services removed - using Firestore listeners
   void _initializeNotifications() async {
-    // No notification initialization needed
     _listenToPassengerNotifications();
   }
 
+  void _startAutomaticDriverCheck() async {
+    // Listen to real-time queue changes instead of periodic timer
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final firestoreService =
+        Provider.of<FirestoreService>(context, listen: false);
+    final locationService =
+        Provider.of<LocationService>(context, listen: false);
+
+    String? barangayId = authService.currentUserModel?.barangayId;
+
+    // If no barangay in profile, try to find it from current location
+    if (barangayId == null || barangayId.isEmpty) {
+      try {
+        final position = await locationService.getCurrentLocation();
+        if (position != null) {
+          final detectedBarangayId = await firestoreService
+              .getBarangayForLocation(position.latitude, position.longitude);
+          if (detectedBarangayId != null) {
+            barangayId = detectedBarangayId;
+            print(
+                '📍 [startAutomaticDriverCheck] Detected barangay from location: $barangayId');
+
+            // Ensure geofences are loaded for this detected barangay
+            // This prevents "outside service area" errors when user has no assigned barangay
+            await locationService.loadGeofences(barangayId: barangayId);
+          }
+        }
+      } on LocationServiceException catch (_) {
+        if (mounted) {
+          LocationHelpers.showLocationDisabledDialog(context);
+        }
+      } catch (e) {
+        print(
+            '⚠️ [startAutomaticDriverCheck] Location-based detection failed: $e');
+      }
+    }
+
+    if (barangayId != null && barangayId.isNotEmpty) {
+      // Ensure geofences are loaded (safe to call repeatedly as it checks _currentBarangayId)
+      locationService.loadGeofences(barangayId: barangayId);
+
+      final queueSubscription = firestoreService
+          .getQueueStreamForBarangay(barangayId)
+          .listen((queueDrivers) {
+        if (mounted) {
+          _updateOnlineDriversFromQueue(queueDrivers);
+        }
+      });
+
+      _subscriptions.add(queueSubscription);
+    } else {
+      print(
+          '⚠️ [startAutomaticDriverCheck] No barangayId found for user or location');
+      setState(() {
+        _onlineDrivers = [];
+        _isCheckingDrivers = false;
+      });
+    }
+  }
+
+  void _updateOnlineDriversFromQueue(List<String> queueDrivers) {
+    // Convert queue driver IDs to online drivers list
+    final List<Map<String, dynamic>> onlineDrivers = [];
+
+    for (String driverId in queueDrivers) {
+      onlineDrivers.add({
+        'id': driverId,
+        'name': 'Driver ${driverId.substring(0, 6)}', // Placeholder name
+        'isInQueue': true,
+      });
+    }
+
+    setState(() {
+      _onlineDrivers = onlineDrivers;
+      _isCheckingDrivers = false;
+    });
+
+    print(
+        '🔄 Real-time queue update: ${onlineDrivers.length} drivers in queue');
+  }
+
   void _checkMaintenanceMode() {
-    final firestoreService = Provider.of<FirestoreService>(
-      context,
-      listen: false,
-    );
-    final subscription = firestoreService.getMaintenanceModeStream().listen((
-      maintenance,
-    ) {
+    final firestoreService =
+        Provider.of<FirestoreService>(context, listen: false);
+    final subscription =
+        firestoreService.getMaintenanceModeStream().listen((maintenance) {
       if (mounted) {
         setState(() {
           _isMaintenanceMode = maintenance;
@@ -76,18 +346,15 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
 
   void _checkActiveRide() {
     final authService = Provider.of<AuthService>(context, listen: false);
-    final firestoreService = Provider.of<FirestoreService>(
-      context,
-      listen: false,
-    );
+    final firestoreService =
+        Provider.of<FirestoreService>(context, listen: false);
 
     final currentUser = authService.currentUser;
-    if (currentUser == null) return; // Null safety check
+    if (currentUser == null) return;
 
-    final subscription = firestoreService.getUserRides(currentUser.uid).listen((
-      rides,
-    ) {
-      final activeRides = rides
+    final subscription =
+        firestoreService.getUserRides(currentUser.uid).listen((rides) {
+      final activeRidesRaw = rides
           .where(
             (ride) =>
                 ride.status != RideStatus.completed &&
@@ -95,6 +362,17 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
                 ride.status != RideStatus.failed,
           )
           .toList();
+      final activeRides = activeRidesRaw.where((ride) {
+        final isIgnoredPending = ride.status == RideStatus.pending &&
+            _ignoredRideIds.contains(ride.id);
+        return !isIgnoredPending;
+      }).toList();
+      for (final ride in rides) {
+        if (_ignoredRideIds.contains(ride.id) &&
+            ride.status != RideStatus.pending) {
+          _ignoredRideIds.remove(ride.id);
+        }
+      }
 
       if (mounted) {
         setState(() {
@@ -105,24 +383,107 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
     _subscriptions.add(subscription);
   }
 
-  // Check for online drivers
+  void _checkActivePasaBuy() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final firestoreService =
+        Provider.of<FirestoreService>(context, listen: false);
+
+    final currentUser = authService.currentUser;
+    if (currentUser == null) return;
+
+    final subscription = firestoreService
+        .getPassengerPasaBuyRequests(currentUser.uid)
+        .listen((requests) {
+      final activeRequests = requests
+          .where(
+            (req) =>
+                req.status != PasaBuyStatus.completed &&
+                req.status != PasaBuyStatus.cancelled,
+          )
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _activePasaBuy =
+              activeRequests.isNotEmpty ? activeRequests.first : null;
+        });
+      }
+    });
+    _subscriptions.add(subscription);
+  }
+
+  RideStatus _mapPasaBuyStatusToRideStatus(PasaBuyStatus status) {
+    switch (status) {
+      case PasaBuyStatus.pending:
+        return RideStatus.pending;
+      case PasaBuyStatus.accepted:
+        return RideStatus.accepted;
+      case PasaBuyStatus.driver_on_way:
+        return RideStatus.driverOnWay;
+      case PasaBuyStatus.arrived_pickup:
+        return RideStatus.driverArrived;
+      case PasaBuyStatus.delivery_in_progress:
+        return RideStatus.inProgress;
+      case PasaBuyStatus.completed:
+        return RideStatus.completed;
+      case PasaBuyStatus.cancelled:
+        return RideStatus.cancelled;
+      default:
+        return RideStatus.pending;
+    }
+  }
+
   Future<void> _checkOnlineDrivers() async {
     setState(() {
       _isCheckingDrivers = true;
     });
 
     try {
-      final firestoreService = Provider.of<FirestoreService>(
-        context,
-        listen: false,
-      );
-      final drivers = await firestoreService.getOnlineDrivers();
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final firestoreService =
+          Provider.of<FirestoreService>(context, listen: false);
+      final locationService =
+          Provider.of<LocationService>(context, listen: false);
 
-      setState(() {
-        _onlineDrivers = drivers;
-        _isCheckingDrivers = false;
-      });
+      String? barangayId = authService.currentUserModel?.barangayId;
+
+      // If user has no barangay assigned or we want to be more accurate, try to get current location
+      try {
+        final position = await locationService.getCurrentLocation();
+        if (position != null) {
+          final currentBarangayId = await firestoreService
+              .getBarangayForLocation(position.latitude, position.longitude);
+          if (currentBarangayId != null) {
+            barangayId = currentBarangayId;
+            print('📍 Using current location barangay: $barangayId');
+            // Ensure geofences are loaded for the current location's barangay
+            await locationService.loadGeofences(barangayId: barangayId);
+          }
+        }
+      } on LocationServiceException catch (_) {
+        if (mounted) {
+          LocationHelpers.showLocationDisabledDialog(context);
+        }
+      } catch (locationError) {
+        print(
+            '⚠️ Could not determine current barangay from location: $locationError');
+        // Fallback to user's registered barangayId
+      }
+
+      if (barangayId != null && barangayId.isNotEmpty) {
+        final queueDrivers =
+            await firestoreService.getQueueForBarangay(barangayId);
+        _updateOnlineDriversFromQueue(queueDrivers);
+      } else {
+        print(
+            '⚠️ [_checkOnlineDrivers] No barangayId found for user and location check failed');
+        setState(() {
+          _onlineDrivers = [];
+          _isCheckingDrivers = false;
+        });
+      }
     } catch (e) {
+      print('Error checking online drivers: $e');
       setState(() {
         _onlineDrivers = [];
         _isCheckingDrivers = false;
@@ -130,14 +491,11 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
     }
   }
 
-  // Listen to notifications for ride declines and no drivers available
   void _listenToNotifications() {
     final authService = Provider.of<AuthService>(context, listen: false);
-
     final currentUser = authService.currentUser;
-    if (currentUser == null) return; // Null safety check
+    if (currentUser == null) return;
 
-    // Listen for ride declined notifications
     final declinedSub = FirebaseFirestore.instance
         .collection('notifications')
         .where('userId', isEqualTo: currentUser.uid)
@@ -145,14 +503,20 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
         .where('read', isEqualTo: false)
         .snapshots()
         .listen((snapshot) {
-          for (var doc in snapshot.docs) {
-            final data = doc.data();
-            _showDriverDeclineDialog(data['rideId'], doc.id);
-          }
-        });
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+
+        // If we have an active ride screen showing for this ride, let that screen handle the notification
+        // to avoid showing duplicate dialogs
+        if (_activeRide != null && _activeRide!.id == data['rideId']) {
+          continue;
+        }
+
+        _showDriverDeclineDialog(data['rideId'], doc.id);
+      }
+    });
     _subscriptions.add(declinedSub);
 
-    // Listen for no drivers available notifications
     final noDriversSub = FirebaseFirestore.instance
         .collection('notifications')
         .where('userId', isEqualTo: currentUser.uid)
@@ -160,126 +524,153 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
         .where('read', isEqualTo: false)
         .snapshots()
         .listen((snapshot) {
-          for (var doc in snapshot.docs) {
-            final data = doc.data();
-            _showNoDriversAvailableDialog(data['rideId'], doc.id);
-          }
-        });
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        _showNoDriversAvailableDialog(data['rideId'], doc.id);
+      }
+    });
     _subscriptions.add(noDriversSub);
   }
 
-  /// Listen to ride changes directly (notifications removed)
   void _listenToPassengerNotifications() {
     final authService = Provider.of<AuthService>(context, listen: false);
-
     final currentUser = authService.currentUser;
-    if (currentUser == null) return; // Null safety check
+    if (currentUser == null) return;
 
-    // Listen directly to rides collection for real-time updates
     final ridesSub = FirebaseFirestore.instance
         .collection('rides')
         .where('passengerId', isEqualTo: currentUser.uid)
         .snapshots()
         .listen((snapshot) {
-          for (final change in snapshot.docChanges) {
-            if (change.type == DocumentChangeType.modified) {
-              final rideData = change.doc.data();
-              if (rideData == null) continue;
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.modified) {
+          final rideData = change.doc.data();
+          if (rideData == null) continue;
 
-              final status = rideData['status'] as String?;
+          final status = rideData['status'] as String?;
 
-              // Handle ride status changes
-              if (status == 'accepted') {
-                print('✅ Ride accepted by driver');
-              } else if (status == 'started') {
-                print('🚗 Ride started');
-              } else if (status == 'completed') {
-                print('🎉 Ride completed');
-              }
-            }
+          if (status == 'accepted') {
+            print('Ride accepted');
+          } else if (status == 'started') {
+            print('Ride started');
+          } else if (status == 'completed') {
+            print('Ride completed');
           }
-        });
+        }
+      }
+    });
     _subscriptions.add(ridesSub);
   }
 
-  // Notification methods removed - using direct ride listening
-
-  // Show dialog when driver declines ride
   Future<void> _showDriverDeclineDialog(
-    String rideId,
-    String notificationId,
-  ) async {
+      String rideId, String notificationId) async {
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Row(
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.warning, color: Colors.orange[600]),
-              const SizedBox(width: 8),
-              const Text('Driver Declined'),
+              Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: Colors.orange.shade50, shape: BoxShape.circle),
+                  child: const Icon(Icons.warning_amber_rounded,
+                      color: Colors.orange, size: 32)),
+              const SizedBox(height: 24),
+              const Text('Driver Declined',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF1A1A1A))),
+              const SizedBox(height: 12),
+              Text(
+                  'The assigned driver declined your ride request. Would you like us to find another driver for you?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 15,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 32),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: const StadiumBorder()),
+                      child: Text('Cancel',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.grey.shade600)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryGreen,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: const StadiumBorder(),
+                          elevation: 0),
+                      child: const Text('Find Another',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
-          content: const Text(
-            'The assigned driver declined your ride request. Would you like us to find another driver for you?',
-            style: TextStyle(fontSize: 16),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel Ride'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryBlue,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Find Another Driver'),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
 
-    // Mark notification as read
     await FirebaseFirestore.instance
         .collection('notifications')
         .doc(notificationId)
         .update({'read': true});
 
-    if (result == true) {
-      // Passenger wants to find another driver - monitor the ride status
-      if (mounted) {
-        SnackbarHelper.showInfo(context, 'Looking for another driver...');
-
-        // Monitor ride status for reassignment or failure
-        _monitorRideReassignment(rideId);
+    if (result == true && mounted) {
+      SnackbarHelper.showInfo(context, 'Looking for another driver...');
+      final firestoreService =
+          Provider.of<FirestoreService>(context, listen: false);
+      try {
+        final foundDriver = await firestoreService.requestAnotherDriver(rideId);
+        if (mounted) {
+          if (foundDriver) {
+            SnackbarHelper.showSuccess(
+                context, 'Found another driver! Waiting for acceptance...');
+          } else {
+            SnackbarHelper.showError(
+                context, 'No drivers available. Please try again later.');
+          }
+        }
+      } catch (e) {
+        if (mounted)
+          SnackbarHelper.showError(context, 'Failed to find another driver.');
       }
     } else if (result == false) {
-      // Passenger wants to cancel the ride
-      final firestoreService = Provider.of<FirestoreService>(
-        context,
-        listen: false,
-      );
-      await firestoreService.updateRideStatus(rideId, RideStatus.cancelled);
-
-      if (mounted) {
-        SnackbarHelper.showSuccess(context, 'Ride cancelled successfully');
+      final firestoreService =
+          Provider.of<FirestoreService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      if (authService.currentUser != null) {
+        await firestoreService.cancelRideByPassenger(
+            rideId, authService.currentUser!.uid);
+        if (mounted) SnackbarHelper.showSuccess(context, 'Ride cancelled');
       }
     }
   }
 
-  // Show dialog when no drivers are available
   Future<void> _showNoDriversAvailableDialog(
-    String rideId,
-    String notificationId,
-  ) async {
-    // Mark notification as read first (if notificationId is provided)
+      String rideId, String notificationId) async {
     if (notificationId.isNotEmpty) {
       await FirebaseFirestore.instance
           .collection('notifications')
@@ -288,249 +679,270 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
     }
 
     if (!mounted) return;
+    _ignoredRideIds.add(rideId);
 
-    await showDialog<void>(
+    // Show the enhanced dialog
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
           ),
-          title: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.info_outline, color: AppTheme.infoColor),
-              const SizedBox(width: 8),
-              const Text('No Drivers Available'),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.hail_rounded,
+                    color: Colors.blue.shade700, size: 40),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'No Drivers Nearby',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF1A1A1A),
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'We couldn\'t find any available drivers at the moment. Please wait a few minutes and try again.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 32),
+              const Text(
+                'Returning to dashboard...',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(
+                  backgroundColor: Colors.grey.shade100,
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(Colors.blue.shade300),
+                  minHeight: 6,
+                ),
+              ),
             ],
           ),
-          content: const Text(
-            'Sorry, there are no drivers available at the moment. Please try booking again later.',
-            style: TextStyle(fontSize: 16),
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                // Navigate to home tab
-                setState(() {
-                  _currentIndex = 0;
-                });
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryBlue,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
 
-    // Show notification message
+    // Wait 3-5 seconds then redirect/reset
+    await Future.delayed(const Duration(seconds: 4));
+
     if (mounted) {
-      SnackbarHelper.showWarning(
-        context,
-        'No drivers available. Please try again later.',
-        seconds: 3,
-      );
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      setState(() => _currentIndex = 0);
     }
   }
 
-  // Monitor ride reassignment after passenger chooses to find another driver
-  void _monitorRideReassignment(String rideId) {
-    // Listen to ride status changes for a limited time (30 seconds)
-    late StreamSubscription<DocumentSnapshot> subscription;
-    Timer? timeoutTimer;
-
-    subscription = FirebaseFirestore.instance
-        .collection('rides')
-        .doc(rideId)
-        .snapshots()
-        .listen((snapshot) {
-          if (!snapshot.exists || !mounted) {
-            subscription.cancel();
-            timeoutTimer?.cancel();
-            return;
-          }
-
-          final rideData = snapshot.data() as Map<String, dynamic>;
-          final status = rideData['status'] as String?;
-
-          if (status == 'failed') {
-            // Ride failed - no drivers available
-            subscription.cancel();
-            timeoutTimer?.cancel();
-
-            if (mounted) {
-              _showNoDriversAvailableDialog(rideId, '');
-            }
-          } else if (status == 'pending' && rideData.containsKey('driverId')) {
-            // Successfully reassigned to another driver
-            subscription.cancel();
-            timeoutTimer?.cancel();
-
-            if (mounted) {
-              SnackbarHelper.showSuccess(
-                context,
-                'Found another driver! Your ride is confirmed.',
-                seconds: 3,
-              );
-            }
-          }
-        });
-
-    // Set timeout to stop monitoring after 30 seconds
-    timeoutTimer = Timer(const Duration(seconds: 30), () {
-      subscription.cancel();
-      if (mounted) {
-        SnackbarHelper.showInfo(
-          context,
-          'Still looking for drivers. Please wait...',
-          seconds: 3,
-        );
-      }
-    });
-  }
-
-  // Show logout confirmation dialog
   Future<void> _showLogoutConfirmation() async {
     final bool? shouldLogout = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Row(
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.logout, color: AppTheme.primaryBlue),
-              const SizedBox(width: 8),
-              const Text('Confirm Logout'),
+              Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: Colors.red.shade50, shape: BoxShape.circle),
+                  child: const Icon(Icons.logout_rounded,
+                      color: Colors.red, size: 32)),
+              const SizedBox(height: 24),
+              const Text('Sign Out',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF1A1A1A))),
+              const SizedBox(height: 12),
+              Text('Are you sure you want to log out of your account?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 15,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 32),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: const StadiumBorder()),
+                      child: Text('Cancel',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.grey.shade600)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: const StadiumBorder(),
+                          elevation: 0),
+                      child: const Text('Logout',
+                          style: TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
-          content: const Text(
-            'Are you sure you want to log out of your  account?',
-            style: TextStyle(fontSize: 16),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(
-                  color: Color(0xFF757575),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2D2D2D),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Logout',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
 
     if (shouldLogout == true && mounted) {
       final authService = Provider.of<AuthService>(context, listen: false);
       await authService.signOut();
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/login');
-      }
+      if (mounted) Navigator.of(context).pushReplacementNamed('/login');
     }
   }
 
-  // Check driver availability before booking
   Future<void> _checkDriverAvailabilityAndBook() async {
-    setState(() {
-      _isCheckingDrivers = true;
-    });
+    await _checkAvailabilityAndNavigate(const BookRideScreen());
+  }
 
+  Future<void> _checkDriverAvailabilityAndBookPasaBuy() async {
+    await _checkAvailabilityAndNavigate(const PasaBuyScreen());
+  }
+
+  Future<void> _checkAvailabilityAndNavigate(Widget destination) async {
+    setState(() => _isCheckingDrivers = true);
+    HapticFeedback.mediumImpact();
     await _checkOnlineDrivers();
 
     if (_onlineDrivers.isEmpty) {
       if (mounted) {
+        HapticFeedback.heavyImpact();
         showDialog(
           context: context,
+          barrierDismissible: false,
           builder: (BuildContext context) {
-            return AlertDialog(
+            return Dialog(
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: Row(
-                children: [
-                  Icon(Icons.warning, color: Colors.orange[600]),
-                  const SizedBox(width: 8),
-                  const Text('No Drivers Available'),
-                ],
-              ),
-              content: const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Sorry, there are currently no drivers online in your area.',
-                    style: TextStyle(fontSize: 16),
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    'Please try again in a few minutes or contact TODA support.',
-                    style: TextStyle(fontSize: 14, color: Colors.black),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(
-                    'Try Again',
-                    style: TextStyle(
-                      color: AppTheme.primaryBlue,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  borderRadius: BorderRadius.circular(28)),
+              elevation: 0,
+              backgroundColor: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
                 ),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _checkOnlineDrivers(); // Refresh driver list
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.location_off_rounded,
+                          color: Colors.orange.shade700, size: 40),
                     ),
-                  ),
-                  child: const Text(
-                    'Refresh',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'No Drivers in Area',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1A1A1A),
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Sorry, there are currently no drivers online in your area. Please try again in a few minutes.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    const Text(
+                      'Returning to dashboard...',
+                      style: TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: LinearProgressIndicator(
+                        backgroundColor: Colors.grey.shade100,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.orange.shade300),
+                        minHeight: 6,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         );
+
+        // Wait 4 seconds then close
+        await Future.delayed(const Duration(seconds: 4));
+        if (mounted) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          // Re-check drivers silently to update UI state
+          _checkOnlineDrivers();
+        }
       }
     } else {
-      // Drivers available, proceed to booking
       if (mounted) {
         Navigator.of(context).push(
           SlidePageRoute(
-            child: const BookRideScreen(),
+            child: destination,
             direction: AxisDirection.left,
           ),
         );
@@ -547,122 +959,240 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // Show maintenance mode notice
+    if (user.idVerificationStatus != IdVerificationStatus.approved) {
+      return _buildPendingVerificationScreen(context, user, authService);
+    }
+
     if (_isMaintenanceMode) {
       return _MaintenanceModeScreen();
     }
 
-    // If there's an active ride, show the active ride screen
-    if (_activeRide != null) {
+    if (_activeRide != null && _activeRide!.status != RideStatus.pending) {
       return ActiveRideScreen(ride: _activeRide!);
     }
 
+    if (_activePasaBuy != null) {
+      final status = _activePasaBuy!.status;
+      if (status == PasaBuyStatus.pending) {
+        return PasaBuyWaitingScreen(
+          requestId: _activePasaBuy!.id,
+          request: _activePasaBuy!,
+        );
+      }
+      if (status != PasaBuyStatus.cancelled &&
+          status != PasaBuyStatus.completed) {
+        return ActiveRideScreen(
+          ride: RideModel(
+            id: _activePasaBuy!.id,
+            passengerId: _activePasaBuy!.passengerId,
+            pickupLocation: _activePasaBuy!.pickupLocation,
+            dropoffLocation: _activePasaBuy!.dropoffLocation,
+            pickupAddress: _activePasaBuy!.pickupAddress,
+            dropoffAddress: _activePasaBuy!.dropoffAddress,
+            status: _mapPasaBuyStatusToRideStatus(status),
+            fare: _activePasaBuy!.budget,
+            estimatedDuration: 0,
+            requestedAt: _activePasaBuy!.createdAt,
+            driverId: _activePasaBuy!.driverId,
+            acceptedAt: _activePasaBuy!.acceptedAt,
+            isPasaBuy: true,
+            itemDescription: _activePasaBuy!.itemDescription,
+            barangayId: _activePasaBuy!.barangayId,
+            barangayName: _activePasaBuy!.barangayName,
+          ),
+        );
+      }
+    }
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Passenger Dashboard'),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2D2D2D),
-        elevation: 0,
-      ),
-      drawer: Drawer(child: _ProfileDrawer(onLogout: _showLogoutConfirmation)),
+      backgroundColor: AppTheme.backgroundLight,
       body: IndexedStack(
         index: _currentIndex,
         children: [
           _HomeTab(
-            onTabChange: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
+            onTabChange: (index) => setState(() => _currentIndex = index),
             onBookRide: _checkDriverAvailabilityAndBook,
+            onBookPasaBuy: _checkDriverAvailabilityAndBookPasaBuy,
             onlineDrivers: _onlineDrivers,
             isCheckingDrivers: _isCheckingDrivers,
-            onRefreshDrivers: _checkOnlineDrivers,
+            recentRides: _recentRides,
           ),
-          const RideHistoryScreen(),
+          const HistoryHubScreen(),
+          _ProfileTab(onLogout: _showLogoutConfirmation),
         ],
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
+          color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.grey.withOpacity(0.2),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 20,
+              offset: const Offset(0, -5),
             ),
           ],
         ),
-        child: Stack(
-          children: [
-            // Gradient effect for selected item
-            if (_currentIndex == 0)
-              Positioned(
-                left: 0,
-                right: MediaQuery.of(context).size.width / 2,
-                bottom: 0,
-                child: Container(
-                  height: 3,
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF0D7CFF), Color(0xFF0052CC)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                  ),
-                ),
-              )
-            else if (_currentIndex == 1)
-              Positioned(
-                left: MediaQuery.of(context).size.width / 2,
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  height: 3,
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF0D7CFF), Color(0xFF0052CC)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                  ),
-                ),
+        child: SafeArea(
+          child: BottomNavigationBar(
+            currentIndex: _currentIndex,
+            onTap: (index) {
+              if (_currentIndex != index) {
+                HapticFeedback.lightImpact();
+                setState(() => _currentIndex = index);
+              }
+            },
+            backgroundColor: Colors.white,
+            selectedItemColor: AppTheme.primaryGreen,
+            unselectedItemColor: Colors.grey[600],
+            selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
+            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+            showUnselectedLabels: true,
+            type: BottomNavigationBarType.fixed,
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home_rounded),
+                label: 'Home',
               ),
-            BottomNavigationBar(
-              type: BottomNavigationBarType.fixed,
-              currentIndex: _currentIndex,
-              onTap: (index) {
-                setState(() {
-                  _currentIndex = index;
-                });
-              },
-              selectedItemColor: const Color(0xFF0D7CFF),
-              unselectedItemColor: const Color(0xFF2D2D2D),
-              selectedFontSize: 12,
-              unselectedFontSize: 11,
-              elevation: 0,
-              items: [
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.home_outlined),
-                  activeIcon: ShaderMask(
-                    shaderCallback: (bounds) => LinearGradient(
-                      colors: [Color(0xFF0D7CFF), Color(0xFF0052CC)],
-                    ).createShader(bounds),
-                    child: Icon(Icons.home, color: Colors.white),
-                  ),
-                  label: 'Home',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.history_outlined),
-                  activeIcon: ShaderMask(
-                    shaderCallback: (bounds) => LinearGradient(
-                      colors: [Color(0xFF0D7CFF), Color(0xFF0052CC)],
-                    ).createShader(bounds),
-                    child: Icon(Icons.history, color: Colors.white),
-                  ),
-                  label: 'History',
-                ),
-              ],
+              BottomNavigationBarItem(
+                icon: Icon(Icons.history_rounded),
+                label: 'History',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.person_rounded),
+                label: 'Profile',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showPermissionDeniedDialog(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.location_disabled, color: Colors.orange, size: 24),
+            const SizedBox(width: 8),
+            const Text('Location Permission Required'),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              // Open app settings
+              await Geolocator.openAppSettings();
+              // Try checking drivers again after settings are opened
+              Future.delayed(const Duration(seconds: 2), () {
+                if (mounted) _checkOnlineDrivers();
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2D2D2D),
+              foregroundColor: Colors.white,
             ),
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingVerificationScreen(BuildContext context, UserModel user, AuthService authService) {
+    String title = 'Verification Pending';
+    String message = 'Your government ID is currently under review by an admin. You will be notified once it is approved. Check back later!';
+    IconData icon = Icons.hourglass_top_rounded;
+    Color color = Colors.orange;
+
+    if (user.idVerificationStatus == IdVerificationStatus.rejected) {
+      title = 'Verification Rejected';
+      message = 'Your ID verification was rejected.\n\nReason: ${user.idVerificationNote ?? "Please submit a clearer photo."}\n\nPlease re-upload your ID below.';
+      icon = Icons.error_outline_rounded;
+      color = Colors.red;
+    } else if (user.idVerificationStatus == IdVerificationStatus.notSubmitted) {
+      title = 'Verify Your Identity';
+      message = 'To use PASAKAY, you need to upload a valid government ID (e.g. PhilSys, Passport, Driver\'s License). This is required for all passengers.';
+      icon = Icons.badge_outlined;
+      color = AppTheme.primaryGreen;
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: const Text('Account Status', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Colors.black),
+            onPressed: () async {
+              await authService.refreshUserData();
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Icon(icon, size: 100, color: color),
+            const SizedBox(height: 32),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
+            const SizedBox(height: 16),
+            Text(message, textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: Colors.grey.shade600, height: 1.5)),
+            const SizedBox(height: 48),
+            
+            if (user.idVerificationStatus == IdVerificationStatus.notSubmitted || user.idVerificationStatus == IdVerificationStatus.rejected) ...[
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const StandaloneIdVerificationScreen()),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryGreen,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text('Upload ID Now', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () async {
+                  await authService.signOut();
+                  // ignore: use_build_context_synchronously
+                  if (!context.mounted) return;
+                  Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+                },
+                child: const Text('Log Out', style: TextStyle(color: AppTheme.textSecondary, fontSize: 15, fontWeight: FontWeight.bold)),
+              ),
+            ] else ...[
+              ElevatedButton(
+                onPressed: () async {
+                  await authService.signOut();
+                  // ignore: use_build_context_synchronously
+                  if (!context.mounted) return;
+                  Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryGreen,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text('Log Out', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900)),
+              ),
+            ],
           ],
         ),
       ),
@@ -673,110 +1203,356 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
 class _HomeTab extends StatelessWidget {
   final Function(int) onTabChange;
   final VoidCallback onBookRide;
+  final VoidCallback onBookPasaBuy;
   final List<Map<String, dynamic>> onlineDrivers;
   final bool isCheckingDrivers;
-  final VoidCallback onRefreshDrivers;
+  final List<RideModel> recentRides;
 
   const _HomeTab({
     required this.onTabChange,
     required this.onBookRide,
+    required this.onBookPasaBuy,
     required this.onlineDrivers,
     required this.isCheckingDrivers,
-    required this.onRefreshDrivers,
+    required this.recentRides,
   });
+
+  Widget _buildIdVerificationBanner(BuildContext context, UserModel user) {
+    Color bgColor;
+    Color textColor;
+    IconData icon;
+    String title;
+    String subtitle;
+
+    switch (user.idVerificationStatus) {
+      case IdVerificationStatus.pending:
+        bgColor = Colors.orange.shade50;
+        textColor = Colors.orange.shade800;
+        icon = Icons.hourglass_top_rounded;
+        title = 'ID Verification Pending';
+        subtitle = 'Your government ID is currently under review by an admin.';
+        break;
+      case IdVerificationStatus.rejected:
+        bgColor = Colors.red.shade50;
+        textColor = Colors.red.shade800;
+        icon = Icons.error_outline_rounded;
+        title = 'Verification Rejected';
+        subtitle = user.idVerificationNote ??
+            'Please re-submit a clearer photo of your ID.';
+        break;
+      case IdVerificationStatus.notSubmitted:
+      default:
+        bgColor = AppTheme.primaryGreenLight;
+        textColor = AppTheme.primaryGreen;
+        icon = Icons.badge_outlined;
+        title = 'Verify Your Identity';
+        subtitle =
+            'Upload your government ID to get a verified passenger badge.';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: textColor.withAlpha(50)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: textColor, size: 28),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                        fontSize: 13)),
+                const SizedBox(height: 4),
+                Text(subtitle,
+                    style: TextStyle(
+                        color: textColor.withAlpha(200), fontSize: 12)),
+              ],
+            ),
+          ),
+          if (user.idVerificationStatus != IdVerificationStatus.pending) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () {
+                // For now prompt to use Profile settings (we can implement profile upload later if needed)
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: const Text('ID Upload from profile is coming soon.'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ));
+              },
+              style: TextButton.styleFrom(
+                foregroundColor: textColor,
+                visualDensity: VisualDensity.compact,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              child: const Text('Update',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final authService = Provider.of<AuthService>(context);
+    final user = authService.currentUserModel;
+
+    String getGreeting() {
+      final hour = DateTime.now().hour;
+      if (hour < 12) return 'Good Morning';
+      if (hour < 17) return 'Good Afternoon';
+      return 'Good Evening';
+    }
+
     return Container(
       color: Colors.white,
       child: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
         slivers: [
-          // Main Action Card - Book a Ride
+          // Modern Professional Header without Search
           SliverToBoxAdapter(
             child: Container(
-              margin: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
+              padding: const EdgeInsets.fromLTRB(24, 60, 24, 40),
+              decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFBDBDBD), width: 1.5),
               ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Row with Greeting and Profile
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Greeting Badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color:
+                                    const Color(0xFF1A1D29).withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color:
+                                      const Color(0xFF1A1D29).withOpacity(0.1),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Text(
+                                getGreeting(),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color:
+                                      const Color(0xFF1A1D29).withOpacity(0.7),
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            // User Name
+                            Text(
+                              '${user?.name.split(' ')[0] ?? 'Passenger'}',
+                              style: const TextStyle(
+                                fontSize: 36,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF1A1D29),
+                                letterSpacing: -1.0,
+                                height: 1.1,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Welcome Message
+                            Text(
+                              '',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.white.withOpacity(0.75),
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: -0.2,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      // Profile Avatar
+                      GestureDetector(
+                        onTap: () => onTabChange(2),
+                        child: Hero(
+                          tag: 'profile_avatar',
+                          child: Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0xFF1A1D29).withOpacity(0.1),
+                                width: 2.5,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
+                            ),
+                            child: CircleAvatar(
+                              radius: 30,
+                              backgroundColor:
+                                  const Color(0xFF1A1D29).withOpacity(0.05),
+                              child: Text(
+                                user?.name.substring(0, 1).toUpperCase() ?? 'U',
+                                style: const TextStyle(
+                                  color: Color(0xFF1A1D29),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (user != null &&
+                      user.idVerificationStatus !=
+                          IdVerificationStatus.approved) ...[
+                    const SizedBox(height: 24),
+                    _buildIdVerificationBanner(context, user),
+                  ],
+                ],
+              ),
+            ),
+          ),
+
+          // Modern Driver Availability Status
+          SliverToBoxAdapter(
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 600),
+              tween: Tween(begin: 0.0, end: 1.0),
+              curve: Curves.easeOutBack,
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: (0.8 + (0.2 * value)).clamp(0.0, 2.0),
+                  child: Opacity(
+                    opacity: value.clamp(0.0, 1.0),
+                    child: child,
+                  ),
+                );
+              },
               child: Padding(
-                padding: const EdgeInsets.all(20.0),
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                child: _ModernAvailabilityStatus(
+                  onlineDrivers: onlineDrivers,
+                  isCheckingDrivers: isCheckingDrivers,
+                ),
+              ),
+            ),
+          ),
+
+          // Modern Services Section
+          SliverToBoxAdapter(
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 700),
+              tween: Tween(begin: 0.0, end: 1.0),
+              curve: Curves.easeOut,
+              builder: (context, value, child) {
+                return Transform.translate(
+                  offset: Offset(0, (30 * (1 - value)).clamp(-100.0, 100.0)),
+                  child: Opacity(
+                    opacity: value.clamp(0.0, 1.0),
+                    child: child,
+                  ),
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF2D2D2D),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.local_taxi,
-                            size: 24,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Ready to go?',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF2D2D2D),
-                                ),
-                              ),
-                              SizedBox(height: 4),
-                              Text(
-                                'Book a ride now',
-                                style: TextStyle(
-                                  color: Color(0xFF757575),
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                          width: 4,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryGreen,
+                            borderRadius: BorderRadius.circular(2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppTheme.primaryGreen.withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
                               ),
                             ],
                           ),
                         ),
+                        const SizedBox(width: 12),
+                        const Text(
+                          'Services',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF1A1D29),
+                            letterSpacing: -0.4,
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        onPressed: isCheckingDrivers ? null : onBookRide,
-                        icon: isCheckingDrivers
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.add_location_alt, size: 20),
-                        label: Text(
-                          isCheckingDrivers ? 'Checking...' : 'Book a Ride',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
+                    const SizedBox(height: 20),
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _ModernServiceCard(
+                              title: 'Book a Ride',
+                              subtitle: 'Get to your destination',
+                              icon: Icons.directions_car_rounded,
+                              color: AppTheme.primaryGreen,
+                              onTap: isCheckingDrivers
+                                  ? null
+                                  : () {
+                                      HapticFeedback.selectionClick();
+                                      onBookRide();
+                                    },
+                            ),
                           ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2D2D2D),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _ModernServiceCard(
+                              title: 'PasaBuy',
+                              subtitle: 'Have items delivered',
+                              icon: Icons.shopping_bag_rounded,
+                              color: const Color(0xFF8B5CF6),
+                              onTap: isCheckingDrivers
+                                  ? null
+                                  : () {
+                                      HapticFeedback.selectionClick();
+                                      onBookPasaBuy();
+                                    },
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ],
@@ -785,222 +1561,965 @@ class _HomeTab extends StatelessWidget {
             ),
           ),
 
-          // Driver Availability Status
+          // Modern Promo Banner
           SliverToBoxAdapter(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.06),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    onlineDrivers.isNotEmpty
-                        ? Icons.check_circle_outline
-                        : Icons.warning_amber_outlined,
-                    color: onlineDrivers.isNotEmpty
-                        ? const Color(0xFF34C759)
-                        : const Color(0xFFFF9500),
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+              child: _ModernPromoBanner(),
+            ),
+          ),
+
+          // Recent Activity Section
+          if (recentRides.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          onlineDrivers.isNotEmpty
-                              ? '${onlineDrivers.length} Drivers Online'
-                              : 'No Drivers Available',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF2D2D2D),
+                        const Text(
+                          'Recent Activity',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF1A1D29),
+                            letterSpacing: -0.4,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          onlineDrivers.isNotEmpty
-                              ? 'Ready to serve you'
-                              : 'Try again later',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF2D2D2D),
+                        TextButton(
+                          onPressed: () => onTabChange(1),
+                          child: Text(
+                            'See All',
+                            style: TextStyle(
+                              color: AppTheme.primaryGreen,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  IconButton(
-                    onPressed: onRefreshDrivers,
-                    icon: const Icon(Icons.refresh, size: 20),
-                    color: const Color(0xFF757575),
-                    tooltip: 'Refresh',
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    ...recentRides
+                        .map((ride) => _RecentRideCard(ride: ride))
+                        .toList(),
+                  ],
+                ),
               ),
             ),
-          ),
-
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-          // Stats Card
-          const SliverToBoxAdapter(child: StatsCard()),
-
-          const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-          // Recent Destinations
-          const SliverToBoxAdapter(child: RecentDestinationsCard()),
-
-          const SliverPadding(padding: EdgeInsets.only(bottom: 20)),
         ],
       ),
     );
   }
 }
 
-class _ProfileDrawer extends StatelessWidget {
+class _RecentRideCard extends StatelessWidget {
+  final RideModel ride;
+
+  const _RecentRideCard({required this.ride});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isCompleted = ride.status == RideStatus.completed;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: (isCompleted ? AppTheme.primaryGreen : Colors.grey)
+                  .withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              ride.isPasaBuy
+                  ? Icons.shopping_bag_rounded
+                  : Icons.directions_car_rounded,
+              color: isCompleted ? AppTheme.primaryGreen : Colors.grey.shade600,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  ride.isPasaBuy
+                      ? 'PasaBuy Delivery'
+                      : 'Ride to ${ride.dropoffAddress.split(',')[0]}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    color: Color(0xFF1A1D29),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${ride.requestedAt != null ? _formatDate(ride.requestedAt!) : "Recent"} • ₱${ride.fare.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: (isCompleted ? AppTheme.primaryGreen : Colors.grey)
+                  .withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              isCompleted ? 'Done' : 'Cancelled',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color:
+                    isCompleted ? AppTheme.primaryGreen : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final difference = now.difference(date);
+    if (difference.inDays == 0) return 'Today';
+    if (difference.inDays == 1) return 'Yesterday';
+    return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+class _ModernAvailabilityStatus extends StatelessWidget {
+  final List<Map<String, dynamic>> onlineDrivers;
+  final bool isCheckingDrivers;
+
+  const _ModernAvailabilityStatus({
+    required this.onlineDrivers,
+    required this.isCheckingDrivers,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool hasDrivers = onlineDrivers.isNotEmpty;
+    final bool isSearching = isCheckingDrivers;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: hasDrivers
+              ? AppTheme.primaryGreen.withOpacity(0.15)
+              : isSearching
+                  ? const Color(0xFF3B82F6).withOpacity(0.15)
+                  : const Color(0xFFF59E0B).withOpacity(0.15),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (hasDrivers
+                    ? AppTheme.primaryGreen
+                    : isSearching
+                        ? const Color(0xFF3B82F6)
+                        : const Color(0xFFF59E0B))
+                .withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Modern Status Icon
+          _AnimatedStatusIcon(
+            hasDrivers: hasDrivers,
+            isSearching: isSearching,
+          ),
+          const SizedBox(width: 16),
+          // Status Text
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hasDrivers
+                      ? '${onlineDrivers.length} drivers available'
+                      : isSearching
+                          ? 'Searching for drivers...'
+                          : 'No drivers nearby',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: hasDrivers
+                        ? AppTheme.primaryGreen
+                        : isSearching
+                            ? const Color(0xFF3B82F6)
+                            : const Color(0xFFF59E0B),
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  hasDrivers
+                      ? 'Ready to serve you'
+                      : isSearching
+                          ? 'Checking availability in your area'
+                          : 'Try again in a few minutes',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: const Color(0xFF6B7280),
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -0.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnimatedStatusIcon extends StatefulWidget {
+  final bool hasDrivers;
+  final bool isSearching;
+
+  const _AnimatedStatusIcon({
+    required this.hasDrivers,
+    required this.isSearching,
+  });
+
+  @override
+  State<_AnimatedStatusIcon> createState() => _AnimatedStatusIconState();
+}
+
+class _AnimatedStatusIconState extends State<_AnimatedStatusIcon>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+    if (widget.hasDrivers || widget.isSearching) {
+      _controller.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedStatusIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((widget.hasDrivers || widget.isSearching) &&
+        !(_controller.isAnimating)) {
+      _controller.repeat(reverse: true);
+    } else if (!widget.hasDrivers && !widget.isSearching) {
+      _controller.stop();
+      _controller.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color baseColor = widget.hasDrivers
+        ? AppTheme.primaryGreen
+        : widget.isSearching
+            ? const Color(0xFF3B82F6)
+            : const Color(0xFFF59E0B);
+
+    return ScaleTransition(
+      scale: _pulseAnimation,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: baseColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            if (widget.hasDrivers || widget.isSearching)
+              BoxShadow(
+                color: baseColor.withOpacity(0.2),
+                blurRadius: 12,
+                spreadRadius: -2,
+              ),
+          ],
+        ),
+        child: widget.isSearching
+            ? Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(baseColor),
+                  ),
+                ),
+              )
+            : Icon(
+                widget.hasDrivers
+                    ? Icons.check_circle_rounded
+                    : Icons.info_rounded,
+                color: baseColor,
+                size: 24,
+              ),
+      ),
+    );
+  }
+}
+
+class _AnimatedIcon extends StatefulWidget {
+  final bool hasDrivers;
+  final bool isSearching;
+
+  const _AnimatedIcon({
+    required this.hasDrivers,
+    required this.isSearching,
+  });
+
+  @override
+  State<_AnimatedIcon> createState() => _AnimatedIconState();
+}
+
+class _AnimatedIconState extends State<_AnimatedIcon>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+    if (widget.isSearching) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isSearching && !oldWidget.isSearching) {
+      _controller.repeat();
+    } else if (!widget.isSearching && oldWidget.isSearching) {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.isSearching) {
+      return RotationTransition(
+        turns: _controller,
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.blue.withOpacity(0.15),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.search_rounded,
+            color: Colors.blue.shade600,
+            size: 20,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: widget.hasDrivers
+            ? AppTheme.primaryGreen.withOpacity(0.15)
+            : Colors.orange.withOpacity(0.15),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        widget.hasDrivers ? Icons.check_circle_rounded : Icons.info_rounded,
+        color:
+            widget.hasDrivers ? AppTheme.primaryGreen : Colors.orange.shade600,
+        size: 20,
+      ),
+    );
+  }
+}
+
+class _ModernServiceCard extends StatefulWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback? onTap;
+
+  const _ModernServiceCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    this.onTap,
+  });
+
+  @override
+  State<_ModernServiceCard> createState() => _ModernServiceCardState();
+}
+
+class _ModernServiceCardState extends State<_ModernServiceCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.96).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+    _slideAnimation = Tween<double>(begin: 0.0, end: 4.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, _slideAnimation.value),
+          child: Transform.scale(
+            scale: _scaleAnimation.value,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: widget.onTap,
+                onTapDown: (_) => _controller.forward(),
+                onTapUp: (_) => _controller.reverse(),
+                onTapCancel: () => _controller.reverse(),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                      BoxShadow(
+                        color: widget.color.withOpacity(0.08),
+                        blurRadius: 40,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                    border: Border.all(
+                      color: widget.color.withOpacity(0.1),
+                      width: 1,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Icon Container
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: widget.color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            widget.icon,
+                            color: widget.color,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        // Title
+                        Text(
+                          widget.title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF1A1D29),
+                            letterSpacing: -0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        // Subtitle
+                        Text(
+                          widget.subtitle,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: const Color(0xFF6B7280),
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: -0.1,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ModernPromoBanner extends StatefulWidget {
+  const _ModernPromoBanner();
+
+  @override
+  State<_ModernPromoBanner> createState() => _ModernPromoBannerState();
+}
+
+class _ModernPromoBannerState extends State<_ModernPromoBanner>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _fadeAnimation =
+        CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    _slideAnimation = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Transform.scale(
+        scale: _slideAnimation.value,
+        child: Container(
+          width: double.infinity,
+          height: 160,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 30,
+                offset: const Offset(0, 12),
+              ),
+              BoxShadow(
+                color: AppTheme.primaryGreen.withOpacity(0.1),
+                blurRadius: 50,
+                offset: const Offset(0, 20),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryGreen.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppTheme.primaryGreen.withOpacity(0.2),
+                          width: 0.5,
+                        ),
+                      ),
+                      child: Text(
+                        'Beyond the Road',
+                        style: TextStyle(
+                          color: AppTheme.primaryGreen,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Safe & Reliable',
+                      style: TextStyle(
+                        color: Color(0xFF1A1D29),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Flexible(
+                      child: Text(
+                        'Book with verified TODA drivers for a secure journey',
+                        style: TextStyle(
+                          color: Color(0xFF6B7280),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: -0.1,
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryGreen.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  Icons.verified_user_rounded,
+                  color: AppTheme.primaryGreen,
+                  size: 28,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileTab extends StatelessWidget {
   final VoidCallback onLogout;
 
-  const _ProfileDrawer({required this.onLogout});
+  const _ProfileTab({required this.onLogout});
 
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final user = authService.currentUserModel;
 
-    return Column(
-      children: [
-        // Drawer Header
-        UserAccountsDrawerHeader(
-          decoration: const BoxDecoration(color: Color(0xFF2D2D2D)),
-          currentAccountPicture: CircleAvatar(
-            backgroundColor: Colors.white,
-            child: Text(
-              user?.name.substring(0, 1).toUpperCase() ?? 'P',
-              style: const TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF2D2D2D),
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(24, 60, 24, 32),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  // Profile Header with Avatar and Info
+                  Row(
+                    children: [
+                      // Avatar Section
+                      Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppTheme.primaryGreen.withOpacity(0.2),
+                            width: 3,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppTheme.primaryGreen.withOpacity(0.2),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: CircleAvatar(
+                          radius: 40,
+                          backgroundColor: AppTheme.primaryGreenLight,
+                          child: Text(
+                            user?.name.substring(0, 1).toUpperCase() ?? 'P',
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.primaryGreen,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      // Passenger Info Section
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              user?.name ?? 'Passenger',
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF1A1A1A),
+                                letterSpacing: -0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Ride Beyond Ordinary',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Logout Button
+                      GestureDetector(
+                        onTap: onLogout,
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.grey.shade200),
+                          ),
+                          child: Icon(Icons.logout_rounded,
+                              color: Colors.red.shade600, size: 20),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
-          accountName: Text(
-            user?.name ?? 'Passenger',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          // Quick Actions Section
+          SliverToBoxAdapter(
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Manage',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF1A1A1A),
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  GridView.count(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 1.45,
+                    children: [
+                      _QuickActionCard(
+                        icon: Icons.person_outline_rounded,
+                        title: 'Edit Profile',
+                        subtitle: 'Update info',
+                        color: const Color(0xFF8B5CF6),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const EditProfileScreen()),
+                          );
+                        },
+                      ),
+                      _QuickActionCard(
+                        icon: Icons.security_rounded,
+                        title: 'Privacy',
+                        subtitle: 'Security settings',
+                        color: const Color(0xFFF59E0B),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) =>
+                                    const PrivacySecurityScreen()),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-          accountEmail: Text(
-            user?.email ?? '',
-            style: const TextStyle(fontSize: 14),
-          ),
-        ),
+        ],
+      ),
+    );
+  }
+}
 
-        // Profile Options
-        Expanded(
-          child: ListView(
-            padding: EdgeInsets.zero,
+class _QuickActionCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _QuickActionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade200),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ListTile(
-                leading: const Icon(Icons.edit, color: Color(0xFF757575)),
-                title: const Text(
-                  'Edit Profile',
-                  style: TextStyle(
-                    color: Color(0xFF2D2D2D),
-                    fontWeight: FontWeight.w600,
-                  ),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                trailing: const Icon(
-                  Icons.arrow_forward_ios,
-                  size: 16,
-                  color: Color(0xFF757575),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const EditProfileScreen(),
-                    ),
-                  );
-                },
+                child: Icon(icon, color: color, size: 20),
               ),
-              ListTile(
-                leading: const Icon(Icons.settings, color: Color(0xFF757575)),
-                title: const Text(
-                  'Settings',
-                  style: TextStyle(
-                    color: Color(0xFF2D2D2D),
-                    fontWeight: FontWeight.w600,
-                  ),
+              const SizedBox(height: 6),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1A1A1A),
                 ),
-                trailing: const Icon(
-                  Icons.arrow_forward_ios,
-                  size: 16,
-                  color: Color(0xFF757575),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsScreen(),
-                    ),
-                  );
-                },
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              ListTile(
-                leading: const Icon(Icons.help, color: Color(0xFF757575)),
-                title: const Text(
-                  'Help & Support',
-                  style: TextStyle(
-                    color: Color(0xFF2D2D2D),
-                    fontWeight: FontWeight.w600,
-                  ),
+              const SizedBox(height: 1),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
                 ),
-                trailing: const Icon(
-                  Icons.arrow_forward_ios,
-                  size: 16,
-                  color: Color(0xFF757575),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  SnackbarHelper.showInfo(
-                    context,
-                    'Help & Support feature coming soon!',
-                  );
-                },
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
         ),
-
-        // Logout Button
-        const Divider(height: 1),
-        ListTile(
-          leading: const Icon(Icons.logout, color: Color(0xFFFF3B30)),
-          title: const Text(
-            'Sign Out',
-            style: TextStyle(
-              color: Color(0xFFFF3B30),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          onTap: () {
-            Navigator.pop(context);
-            onLogout();
-          },
-        ),
-        const SizedBox(height: 16),
-      ],
+      ),
     );
   }
 }
@@ -1094,229 +2613,127 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text(
-          'Edit Profile',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
+        title: const Text('Edit Profile',
+            style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 20,
+                color: Color(0xFF1A1A1A))),
         backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF2D2D2D),
+        foregroundColor: const Color(0xFF1A1A1A),
         elevation: 0,
+        centerTitle: false,
+        leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            onPressed: () => Navigator.pop(context)),
       ),
       body: Column(
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20.0),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
               child: Form(
                 key: _formKey,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Profile Picture Section
+                    // Profile Avatar Section
+                    Center(
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  AppTheme.primaryGreen.withOpacity(0.8),
+                                  AppTheme.primaryGreen
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppTheme.primaryGreen.withOpacity(0.3),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                )
+                              ],
+                            ),
+                            child: Center(
+                              child: Text(
+                                _nameController.text.isNotEmpty
+                                    ? _nameController.text[0].toUpperCase()
+                                    : 'P',
+                                style: const TextStyle(
+                                    fontSize: 48,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _nameController.text.isNotEmpty
+                                ? _nameController.text
+                                : 'Passenger',
+                            style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF1A1A1A)),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _emailController.text,
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.grey.shade600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+
+                    // Form Fields
+                    _buildModernEditField(
+                      controller: _nameController,
+                      label: 'Full Name',
+                      icon: Icons.person_outline_rounded,
+                      enabled: _isEditing,
+                      hint: 'Enter your full name',
+                    ),
+                    const SizedBox(height: 20),
+                    _buildModernEditField(
+                      controller: _phoneController,
+                      label: 'Phone Number',
+                      icon: Icons.phone_outlined,
+                      enabled: false,
+                      keyboardType: TextInputType.phone,
+                      hint: 'Phone number',
+                    ),
                     const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFFBDBDBD),
-                          width: 2,
-                        ),
-                      ),
-                      child: CircleAvatar(
-                        radius: 40,
-                        backgroundColor: const Color(0xFFF5F5F5),
-                        child: const Icon(
-                          Icons.person_outline,
-                          size: 40,
-                          color: Colors.black,
-                        ),
-                      ),
+                    Text(
+                      'Phone number cannot be changed for security reasons',
+                      style:
+                          TextStyle(fontSize: 11, color: Colors.grey.shade600),
                     ),
-                    const SizedBox(height: 12),
-                    TextButton.icon(
-                      onPressed: () {
-                        SnackbarHelper.showInfo(
-                          context,
-                          'Photo upload feature coming soon!',
-                        );
-                      },
-                      icon: const Icon(
-                        Icons.camera_alt_outlined,
-                        size: 14,
-                        color: Color(0xFF757575),
-                      ),
-                      label: const Text(
-                        'Change Photo',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 6,
-                        ),
-                      ),
+                    const SizedBox(height: 20),
+                    _buildModernEditField(
+                      controller: _emailController,
+                      label: 'Email Address',
+                      icon: Icons.email_outlined,
+                      enabled: false,
+                      hint: 'Email address',
                     ),
-                    const SizedBox(height: 28),
-
-                    // Form Fields - Clean and Minimal
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: const Text(
-                        'Personal Information',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Full Name
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _isEditing
-                            ? Colors.white
-                            : const Color(0xFFF5F5F5),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFFBDBDBD),
-                          width: 1.5,
-                        ),
-                      ),
-                      child: TextFormField(
-                        controller: _nameController,
-                        enabled: _isEditing,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Full Name',
-                          labelStyle: TextStyle(
-                            fontSize: 13,
-                            color: Colors.black,
-                          ),
-                          prefixIcon: Icon(
-                            Icons.person_outline,
-                            size: 18,
-                            color: Color(0xFF757575),
-                          ),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Please enter your full name';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Phone Number
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _isEditing
-                            ? Colors.white
-                            : const Color(0xFFF5F5F5),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFFBDBDBD),
-                          width: 1.5,
-                        ),
-                      ),
-                      child: TextFormField(
-                        controller: _phoneController,
-                        enabled: _isEditing,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Phone Number',
-                          labelStyle: TextStyle(
-                            fontSize: 13,
-                            color: Colors.black,
-                          ),
-                          prefixIcon: Icon(
-                            Icons.phone_outlined,
-                            size: 18,
-                            color: Color(0xFF757575),
-                          ),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                        ),
-                        keyboardType: TextInputType.phone,
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Please enter your phone number';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Email Address
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF5F5F5),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFFBDBDBD),
-                          width: 1.5,
-                        ),
-                      ),
-                      child: TextFormField(
-                        controller: _emailController,
-                        enabled: false,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Email Address',
-                          labelStyle: TextStyle(
-                            fontSize: 13,
-                            color: Colors.black,
-                          ),
-                          prefixIcon: Icon(
-                            Icons.email_outlined,
-                            size: 18,
-                            color: Color(0xFF757575),
-                          ),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Text(
-                          'Email cannot be changed',
-                          style: TextStyle(fontSize: 11, color: Colors.black),
-                        ),
-                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Email address cannot be changed for account security',
+                      style:
+                          TextStyle(fontSize: 11, color: Colors.grey.shade600),
                     ),
                   ],
                 ),
@@ -1325,438 +2742,616 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
           // Bottom Action Buttons
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border(
-                top: BorderSide(color: const Color(0xFFBDBDBD), width: 1.5),
-              ),
-            ),
-            child: Row(
-              children: [
-                if (_isEditing) ...[
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _isLoading
-                          ? null
-                          : () {
-                              setState(() {
-                                _isEditing = false;
-                                _loadUserData();
-                              });
-                            },
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF757575),
-                        side: const BorderSide(
-                          color: Color(0xFFBDBDBD),
-                          width: 1.5,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        'Cancel',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _saveProfile,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2D2D2D),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white,
-                                ),
-                              ),
-                            )
-                          : const Text(
-                              'Save Changes',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                    ),
-                  ),
-                ],
-                if (!_isEditing) ...[
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          _isEditing = true;
-                        });
-                      },
-                      icon: const Icon(
-                        Icons.edit_outlined,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                      label: const Text(
-                        'Edit Profile',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2D2D2D),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 24,
+                  offset: const Offset(0, -8),
+                )
               ],
+            ),
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  if (_isEditing) ...[
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _isLoading
+                            ? null
+                            : () {
+                                setState(() {
+                                  _isEditing = false;
+                                  _loadUserData();
+                                });
+                              },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          side: BorderSide(
+                              color: Colors.grey.shade300, width: 1.5),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: Text(
+                          'Cancel',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.grey.shade700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _saveProfile,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryGreen,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('Save Changes',
+                                style: TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.w900)),
+                      ),
+                    ),
+                  ] else ...[
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _isEditing = true;
+                          });
+                        },
+                        icon: const Icon(Icons.edit_rounded, size: 20),
+                        label: const Text('Edit Profile',
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w900)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryGreen,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildModernEditField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    bool enabled = true,
+    TextInputType? keyboardType,
+    String? hint,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF1A1A1A),
+              letterSpacing: 0.5),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          decoration: BoxDecoration(
+            color: enabled ? Colors.white : Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: enabled ? Colors.grey.shade200 : Colors.grey.shade100,
+              width: 1.5,
+            ),
+          ),
+          child: TextFormField(
+            controller: controller,
+            enabled: enabled,
+            keyboardType: keyboardType,
+            style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1A1A1A)),
+            decoration: InputDecoration(
+              prefixIcon: Icon(icon,
+                  color: enabled ? AppTheme.primaryGreen : Colors.grey.shade400,
+                  size: 20),
+              border: InputBorder.none,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              hintText: hint,
+              hintStyle: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade400,
+                  fontWeight: FontWeight.w500),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-// Settings Screen
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+// Privacy and Security Screen
+class PrivacySecurityScreen extends StatefulWidget {
+  const PrivacySecurityScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  State<PrivacySecurityScreen> createState() => _PrivacySecurityScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
-  bool _notificationsEnabled = true;
-  bool _locationEnabled = true;
+class _PrivacySecurityScreenState extends State<PrivacySecurityScreen> {
+  bool _isLoading = false;
+
+  Future<void> _handlePasswordReset() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final user = authService.currentUser;
+
+    if (user != null && user.email != null) {
+      setState(() => _isLoading = true);
+      try {
+        await authService.sendPasswordResetEmail(user.email!);
+        if (mounted) {
+          SnackbarHelper.showSuccess(
+              context, 'Password reset email sent to ${user.email}');
+        }
+      } catch (e) {
+        if (mounted) {
+          SnackbarHelper.showError(context, 'Error: $e');
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleDeleteAccount() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+
+    try {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Delete Account?',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                    'This action is permanent and cannot be undone. All your data will be removed.'),
+                const SizedBox(height: 20),
+                Text(
+                  'To confirm, please type "DELETE MY ACCOUNT" below:',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onChanged: (value) => setDialogState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'DELETE MY ACCOUNT',
+                    hintStyle:
+                        TextStyle(color: Colors.grey.shade400, fontSize: 13),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Colors.red),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                  ),
+                  style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel')),
+              TextButton(
+                onPressed: controller.text == 'DELETE MY ACCOUNT'
+                    ? () => Navigator.pop(context, true)
+                    : null,
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  disabledForegroundColor: Colors.grey.shade300,
+                ),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (confirm == true) {
+        setState(() => _isLoading = true);
+        bool deletionSuccessful = false;
+
+        while (!deletionSuccessful && mounted) {
+          try {
+            await authService.deleteAccount();
+            deletionSuccessful = true;
+            if (mounted) {
+              Navigator.of(context)
+                  .pushNamedAndRemoveUntil('/login', (route) => false);
+              SnackbarHelper.showSuccess(
+                  context, 'Account deleted successfully');
+            }
+          } catch (e) {
+            if (mounted) {
+              if (e.toString().contains('requires-recent-login')) {
+                setState(() => _isLoading = false);
+                final reauthSuccess = await _showReauthDialog();
+                if (reauthSuccess == true && mounted) {
+                  setState(() => _isLoading = true);
+                  continue; // Retry deletion
+                } else {
+                  break; // User cancelled reauth or it failed
+                }
+              } else {
+                SnackbarHelper.showError(
+                    context, 'Could not delete account: $e');
+                break;
+              }
+            } else {
+              break;
+            }
+          }
+        }
+        if (mounted) setState(() => _isLoading = false);
+      }
+    } finally {
+      controller.dispose();
+      focusNode.dispose();
+    }
+  }
+
+  Future<bool?> _showReauthDialog() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final passwordController = TextEditingController();
+    final focusNode = FocusNode();
+    bool isReauthLoading = false;
+
+    try {
+      final result = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Re-authentication Required',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                    'For security reasons, please enter your password to confirm account deletion.'),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: passwordController,
+                  focusNode: focusNode,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    hintText: 'Enter your password',
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    prefixIcon: const Icon(Icons.lock_outline),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: isReauthLoading
+                    ? null
+                    : () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: isReauthLoading
+                    ? null
+                    : () async {
+                        if (passwordController.text.isEmpty) return;
+
+                        setDialogState(() => isReauthLoading = true);
+                        try {
+                          await authService
+                              .reauthenticate(passwordController.text);
+                          if (context.mounted) {
+                            Navigator.pop(context,
+                                true); // Close reauth dialog with success
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            SnackbarHelper.showError(
+                                context, 'Invalid password. Please try again.');
+                          }
+                        } finally {
+                          if (context.mounted)
+                            setDialogState(() => isReauthLoading = false);
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryGreen,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: isReauthLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Confirm'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return result;
+    } finally {
+      passwordController.dispose();
+      focusNode.dispose();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text(
-          'Settings',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
+        title: const Text('Privacy and Security',
+            style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+                color: Color(0xFF1A1A1A))),
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        foregroundColor: const Color(0xFF1A1A1A),
         elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            onPressed: () => Navigator.pop(context)),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20.0),
+      body: Stack(
         children: [
-          // Notifications Section
-          const Text(
-            'Notifications',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.black,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFBDBDBD), width: 1.5),
-            ),
-            child: SwitchListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 4,
+          ListView(
+            padding: const EdgeInsets.all(28.0),
+            children: [
+              const Text('PASSWORD MANAGEMENT',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.grey,
+                      letterSpacing: 1)),
+              const SizedBox(height: 16),
+              _buildSecurityTile(
+                icon: Icons.lock_reset_rounded,
+                title: 'Change Password',
+                subtitle: 'Send reset link to your email',
+                onTap: _isLoading ? null : _handlePasswordReset,
               ),
-              title: const Text(
-                'Push Notifications',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black,
+              const SizedBox(height: 32),
+              const Text('ACCOUNT PRIVACY',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.grey,
+                      letterSpacing: 1)),
+              const SizedBox(height: 16),
+              _buildSecurityTile(
+                icon: Icons.delete_forever_rounded,
+                title: 'Delete Account',
+                subtitle: 'Permanently remove your account',
+                isDestructive: true,
+                onTap: _isLoading ? null : _handleDeleteAccount,
+              ),
+              const SizedBox(height: 40),
+              Center(
+                child: Text(
+                  'Your data is encrypted and secure.',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade400,
+                      fontWeight: FontWeight.w500),
                 ),
               ),
-              subtitle: const Text(
-                'Receive ride updates and alerts',
-                style: TextStyle(fontSize: 12, color: Colors.black),
-              ),
-              value: _notificationsEnabled,
-              activeColor: const Color(0xFF4CAF50),
-              onChanged: (value) {
-                setState(() {
-                  _notificationsEnabled = value;
-                });
-                SnackbarHelper.showInfo(
-                  context,
-                  _notificationsEnabled
-                      ? 'Notifications enabled'
-                      : 'Notifications disabled',
-                );
-              },
-            ),
+            ],
           ),
-          const SizedBox(height: 24),
-
-          // Privacy Section
-          const Text(
-            'Privacy & Location',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.black,
+          if (_isLoading)
+            Container(
+              color: Colors.white.withOpacity(0.5),
+              child: const Center(
+                  child:
+                      CircularProgressIndicator(color: AppTheme.primaryGreen)),
             ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFBDBDBD), width: 1.5),
-            ),
-            child: SwitchListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 4,
-              ),
-              title: const Text(
-                'Location Services',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black,
-                ),
-              ),
-              subtitle: const Text(
-                'Allow location access for ride booking',
-                style: TextStyle(fontSize: 12, color: Colors.black),
-              ),
-              value: _locationEnabled,
-              activeColor: const Color(0xFF4CAF50),
-              onChanged: (value) {
-                setState(() {
-                  _locationEnabled = value;
-                });
-                SnackbarHelper.showInfo(
-                  context,
-                  _locationEnabled
-                      ? 'Location services enabled'
-                      : 'Location services disabled',
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // About Section
-          const Text(
-            'About',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.black,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFBDBDBD), width: 1.5),
-            ),
-            child: Column(
-              children: [
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  leading: const Icon(
-                    Icons.info_outline,
-                    size: 20,
-                    color: Color(0xFF757575),
-                  ),
-                  title: const Text(
-                    'App Version',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                  ),
-                  subtitle: const Text(
-                    '1.0.0',
-                    style: TextStyle(fontSize: 12, color: Colors.black),
-                  ),
-                  trailing: const Icon(
-                    Icons.arrow_forward_ios,
-                    size: 14,
-                    color: Color(0xFF757575),
-                  ),
-                  onTap: () {
-                    showAboutDialog(
-                      context: context,
-                      applicationName: 'yourapp',
-                      applicationVersion: '1.0.0',
-                      applicationLegalese: '© 2024 yourapp TODA System',
-                    );
-                  },
-                ),
-                Divider(height: 1, thickness: 1, color: Colors.white),
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  leading: const Icon(
-                    Icons.lock_outline,
-                    size: 20,
-                    color: Color(0xFF757575),
-                  ),
-                  title: const Text(
-                    'Change Password',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                  ),
-                  trailing: const Icon(
-                    Icons.arrow_forward_ios,
-                    size: 14,
-                    color: Color(0xFF757575),
-                  ),
-                  onTap: () {
-                    SnackbarHelper.showInfo(
-                      context,
-                      'Password change feature coming soon!',
-                    );
-                  },
-                ),
-                Divider(height: 1, thickness: 1, color: Colors.white),
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  leading: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.privacy_tip_outlined,
-                      size: 18,
-                      color: Color(0xFF757575),
-                    ),
-                  ),
-                  title: const Text(
-                    'Privacy Policy',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black,
-                    ),
-                  ),
-                  trailing: const Icon(
-                    Icons.arrow_forward_ios,
-                    size: 14,
-                    color: Color(0xFF757575),
-                  ),
-                  onTap: () {
-                    SnackbarHelper.showInfo(
-                      context,
-                      'Privacy policy feature coming soon!',
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSecurityTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback? onTap,
+    bool isDestructive = false,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.shade100, width: 2),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: isDestructive ? Colors.red.shade50 : Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon,
+              color: isDestructive ? Colors.red : AppTheme.primaryGreen,
+              size: 20),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+            color: isDestructive ? Colors.red : const Color(0xFF1A1A1A),
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade500,
+              fontWeight: FontWeight.w600),
+        ),
+        trailing: const Icon(Icons.arrow_forward_ios_rounded,
+            color: Colors.grey, size: 14),
+        onTap: onTap,
       ),
     );
   }
 }
 
-class _MaintenanceModeScreen extends StatelessWidget {
+class _MaintenanceModeScreen extends StatefulWidget {
+  @override
+  State<_MaintenanceModeScreen> createState() => _MaintenanceModeScreenState();
+}
+
+class _MaintenanceModeScreenState extends State<_MaintenanceModeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFF3B30).withOpacity(0.05),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.construction,
-                size: 80,
-                color: Color(0xFFFF3B30),
+      backgroundColor: Colors.white,
+      body: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                shape: BoxShape.circle,
               ),
-              const SizedBox(height: 24),
-              const Text(
-                'Maintenance Mode',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF2D2D2D),
-                ),
+              child: const Icon(
+                Icons.construction_rounded,
+                size: 64,
+                color: Colors.orange,
               ),
-              const SizedBox(height: 16),
-              const Text(
-                'yourapp is currently under maintenance. Please check back later.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Color(0xFF2D2D2D)),
+            ),
+            const SizedBox(height: 32),
+            const Text(
+              'Under Maintenance',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1A1A1A),
               ),
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pushReplacementNamed('/login');
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFF3B30),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text(
-                  'Okay',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'We\'re currently updating the app to provide you with a better experience. Please check back in a while.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+                height: 1.5,
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton(
+              onPressed: () =>
+                  Navigator.of(context).pushReplacementNamed('/login'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentBlue,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text(
+                'Got it',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+
+  void _checkOnlineDrivers() {
+    // This method is needed for the MaintenanceModeScreen but should be empty
+    // since maintenance mode doesn't need to check drivers
+  }
+}
+
+// Helper widget for detail rows
+Widget _DetailRow(String label, String value) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.grey[600],
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      Text(
+        value,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF2D2D2D),
+        ),
+      ),
+    ],
+  );
 }

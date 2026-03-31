@@ -29,6 +29,12 @@ class RideModel {
   final DateTime? startedAt;
   final DateTime? completedAt;
   final String? notes;
+  final String? barangayId;
+  final String? barangayName;
+  final int passengerCount; // Number of passengers (1-4)
+  final bool isPasaBuy;
+  final String? itemDescription;
+  final DateTime? expiresAt;
 
   RideModel({
     required this.id,
@@ -48,6 +54,12 @@ class RideModel {
     this.startedAt,
     this.completedAt,
     this.notes,
+    this.barangayId,
+    this.barangayName,
+    this.passengerCount = 1, // Default to 1 passenger
+    this.isPasaBuy = false,
+    this.itemDescription,
+    this.expiresAt,
   });
 
   factory RideModel.fromFirestore(DocumentSnapshot doc) {
@@ -80,10 +92,7 @@ class RideModel {
       dropoffLocation: dropoffGeoPoint,
       pickupAddress: data['pickupAddress'] ?? '',
       dropoffAddress: data['dropoffAddress'] ?? '',
-      status: RideStatus.values.firstWhere(
-        (e) => e.toString().split('.').last == data['status'],
-        orElse: () => RideStatus.pending,
-      ),
+      status: _parseStatus(data['status']),
       fare: (data['fare'] ?? 0.0).toDouble(),
       estimatedDuration: data['estimatedDuration'] ?? 0,
       distance: data['distance']?.toDouble(),
@@ -99,7 +108,49 @@ class RideModel {
           ? (data['completedAt'] as Timestamp).toDate()
           : null,
       notes: data['notes'],
+      barangayId: data['barangayId'],
+      barangayName: data['barangayName'],
+      passengerCount: data['passengerCount'] ?? 1,
+      isPasaBuy: data['isPasaBuy'] ?? false,
+      itemDescription: data['itemDescription'],
+      expiresAt: data['expiresAt'] != null
+          ? (data['expiresAt'] as Timestamp).toDate()
+          : null,
     );
+  }
+
+  static RideStatus _parseStatus(String? status) {
+    switch (status) {
+      case 'pending':
+        return RideStatus.pending;
+      case 'accepted':
+        return RideStatus.accepted;
+      case 'driverOnWay':
+      case 'driver_on_way':
+      case 'on_the_way':
+      case 'onTheWay':
+        return RideStatus.driverOnWay;
+      case 'driverArrived':
+      case 'driver_arrived':
+      case 'arrived_pickup':
+      case 'arrived':
+        return RideStatus.driverArrived;
+      case 'inProgress':
+      case 'in_progress':
+      case 'started':
+      case 'onTrip':
+        return RideStatus.inProgress;
+      case 'completed':
+        return RideStatus.completed;
+      case 'cancelled':
+      case 'canceled':
+        return RideStatus.cancelled;
+      case 'failed':
+      case 'interrupted':
+        return RideStatus.failed;
+      default:
+        return RideStatus.pending;
+    }
   }
 
   String? get passengerName => null;
@@ -124,6 +175,12 @@ class RideModel {
           ? Timestamp.fromDate(completedAt!)
           : null,
       'notes': notes,
+      'barangayId': barangayId,
+      'barangayName': barangayName,
+      'passengerCount': passengerCount,
+      'isPasaBuy': isPasaBuy,
+      'itemDescription': itemDescription,
+      'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
     };
   }
 
@@ -134,6 +191,9 @@ class RideModel {
     DateTime? startedAt,
     DateTime? completedAt,
     String? notes,
+    bool? isPasaBuy,
+    String? itemDescription,
+    DateTime? expiresAt,
   }) {
     return RideModel(
       id: id,
@@ -151,6 +211,11 @@ class RideModel {
       startedAt: startedAt ?? this.startedAt,
       completedAt: completedAt ?? this.completedAt,
       notes: notes ?? this.notes,
+      barangayId: barangayId,
+      barangayName: barangayName,
+      isPasaBuy: isPasaBuy ?? this.isPasaBuy,
+      itemDescription: itemDescription ?? this.itemDescription,
+      expiresAt: expiresAt ?? this.expiresAt,
     );
   }
 }

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart';
 import '../utils/app_theme.dart';
 
 /// Enhanced button with better accessibility and feedback
@@ -273,181 +275,274 @@ class LoadingOverlay extends StatelessWidget {
   }
 }
 
-/// Enhanced snackbar helper - All notifications appear at top of screen
+/// Enhanced snackbar helper - All notifications appear below header
 /// Minimal, clean, professional design with subtle colors
 class SnackbarHelper {
-  static void showSuccess(BuildContext context, String message, {int seconds = 2}) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topPadding = MediaQuery.of(context).padding.top;
+  static OverlayEntry? _currentOverlay;
+
+  static void _showCustomNotification(
+    BuildContext context,
+    String message,
+    IconData icon,
+    int seconds,
+  ) {
+    // Remove any existing overlay
+    _currentOverlay?.remove();
     
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Icon(Icons.check_circle_outline, color: Colors.white, size: 18),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.white,
+    final topPadding = MediaQuery.of(context).padding.top;
+    final appBarHeight = AppBar().preferredSize.height;
+    
+    _currentOverlay = OverlayEntry(
+      builder: (context) => Positioned(
+        top: topPadding + appBarHeight + 8,
+        left: 16,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: TweenAnimationBuilder<double>(
+            duration: const Duration(milliseconds: 300),
+            tween: Tween(begin: 0.0, end: 1.0),
+            builder: (context, value, child) {
+              return Transform.translate(
+                offset: Offset(0, -20 * (1 - value)),
+                child: Opacity(
+                  opacity: value,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2D2D2D),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Icon(icon, color: Colors.white, size: 18),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            message,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w400,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ],
+              );
+            },
+          ),
         ),
-        backgroundColor: const Color(0xFF2D2D2D),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: topPadding + 12,
-          left: 16,
-          right: 16,
-          bottom: screenHeight - topPadding - 84,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 0,
-        duration: Duration(seconds: seconds),
       ),
+    );
+    
+    Overlay.of(context).insert(_currentOverlay!);
+    
+    // Auto-remove after specified duration
+    Future.delayed(Duration(seconds: seconds), () {
+      _currentOverlay?.remove();
+      _currentOverlay = null;
+    });
+  }
+
+  static void showSuccess(BuildContext context, String message, {int seconds = 4}) {
+    _showCustomNotification(context, message, Icons.check_circle_outline, seconds);
+  }
+
+  static void showError(BuildContext context, String message, {int seconds = 4}) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.support_agent_rounded, color: Colors.red.shade400, size: 40),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Support Notice',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF1A1A1A),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.5,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red.shade400,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Text('Understood', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
-  static void showError(BuildContext context, String message, {int seconds = 3}) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topPadding = MediaQuery.of(context).padding.top;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Icon(Icons.error_outline, color: Colors.white, size: 18),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.white,
+  static void showInfo(BuildContext context, String message, {int seconds = 3}) {
+    _showCustomNotification(context, message, Icons.info_outline, seconds);
+  }
+
+  static void showWarning(BuildContext context, String message, {int seconds = 4}) {
+    _showCustomNotification(context, message, Icons.warning_amber_outlined, seconds);
+  }
+
+  /// Shows a dialog or bottom sheet to pick between Camera and Gallery
+  static Future<ImageSource?> showImageSourceDialog(BuildContext context) async {
+    if (kIsWeb) return ImageSource.gallery;
+
+    return await showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Select Image Source',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1A1A1A),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _ImageSourceOption(
+                    icon: Icons.camera_alt_rounded,
+                    label: 'Camera',
+                    onTap: () => Navigator.pop(context, ImageSource.camera),
+                    color: AppTheme.primaryGreen,
+                  ),
+                  _ImageSourceOption(
+                    icon: Icons.photo_library_rounded,
+                    label: 'Gallery',
+                    onTap: () => Navigator.pop(context, ImageSource.gallery),
+                    color: AppTheme.primaryBlue,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
         ),
-        backgroundColor: const Color(0xFF2D2D2D),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: topPadding + 12,
-          left: 16,
-          right: 16,
-          bottom: screenHeight - topPadding - 84,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 0,
-        duration: Duration(seconds: seconds),
       ),
     );
   }
+}
 
-  static void showInfo(BuildContext context, String message, {int seconds = 2}) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topPadding = MediaQuery.of(context).padding.top;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
+class _ImageSourceOption extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color color;
+
+  const _ImageSourceOption({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: 120,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
           children: [
             Container(
-              padding: const EdgeInsets.all(6),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
+                color: color.withOpacity(0.1),
+                shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.info_outline, color: Colors.white, size: 18),
+              child: Icon(icon, color: color, size: 32),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.white,
-                ),
+            const SizedBox(height: 12),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF4A4A4A),
               ),
             ),
           ],
         ),
-        backgroundColor: const Color(0xFF2D2D2D),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: topPadding + 12,
-          left: 16,
-          right: 16,
-          bottom: screenHeight - topPadding - 84,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 0,
-        duration: Duration(seconds: seconds),
-      ),
-    );
-  }
-
-  static void showWarning(BuildContext context, String message, {int seconds = 3}) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final topPadding = MediaQuery.of(context).padding.top;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Icon(Icons.warning_amber_outlined, color: Colors.white, size: 18),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: const Color(0xFF2D2D2D),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: topPadding + 12,
-          left: 16,
-          right: 16,
-          bottom: screenHeight - topPadding - 84,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 0,
-        duration: Duration(seconds: seconds),
       ),
     );
   }
@@ -566,7 +661,14 @@ class ConfirmationDialog extends StatelessWidget {
       ),
       actions: [
         TextButton(
-          onPressed: onCancel ?? () => Navigator.of(context).pop(),
+          onPressed: () {
+            print('❌ [ConfirmationDialog] Cancel button pressed');
+            if (onCancel != null) {
+              onCancel!();
+            } else {
+              Navigator.of(context).pop(false);
+            }
+          },
           child: Text(
             cancelText,
             style: const TextStyle(
@@ -578,7 +680,7 @@ class ConfirmationDialog extends StatelessWidget {
         ),
         ElevatedButton(
           onPressed: () {
-            Navigator.of(context).pop();
+            print('✅ [ConfirmationDialog] Confirm button pressed');
             onConfirm();
           },
           style: ElevatedButton.styleFrom(

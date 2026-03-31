@@ -46,12 +46,12 @@ export const onNotificationCreate = onDocumentCreated('notifications/{notificati
       data: {
         ...extra,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        channelId: 'ride_events', // must match client channel
+        channelId: 'ride_requests',
       },
       android: {
         priority: 'high',
         notification: {
-          channelId: 'ride_events',
+          channelId: 'ride_requests',
           sound: 'default',
           color: '#2196F3',
         },

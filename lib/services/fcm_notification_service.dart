@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
@@ -20,7 +19,6 @@ class FCMNotificationService {
   FCMNotificationService._internal();
 
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
-  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   String? _fcmToken;
@@ -49,9 +47,6 @@ class FCMNotificationService {
 
       if (settings.authorizationStatus == AuthorizationStatus.authorized ||
           settings.authorizationStatus == AuthorizationStatus.provisional) {
-        // Initialize local notifications for Android
-        await _initializeLocalNotifications();
-
         // Get FCM token
         _fcmToken = await _firebaseMessaging.getToken();
         print('🔑 FCM Token: $_fcmToken');
@@ -82,30 +77,6 @@ class FCMNotificationService {
     }
   }
 
-  /// Initialize local notifications (for Android foreground notifications)
-  Future<void> _initializeLocalNotifications() async {
-    const AndroidInitializationSettings androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-
-    const InitializationSettings initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
-    );
-
-    await _localNotifications.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTap,
-    );
-
-    print('✅ Local notifications initialized');
-  }
-
   /// Set up message handlers for different app states
   void _setupMessageHandlers() {
     // Handler for when app is in FOREGROUND
@@ -114,9 +85,6 @@ class FCMNotificationService {
       print('   Title: ${message.notification?.title}');
       print('   Body: ${message.notification?.body}');
       print('   Data: ${message.data}');
-
-      // Show local notification when app is in foreground
-      _showLocalNotification(message);
     });
 
     // Handler for when notification is tapped (app in background/terminated)
@@ -136,51 +104,6 @@ class FCMNotificationService {
         _handleNotificationTap(message.data);
       }
     });
-  }
-
-  /// Show local notification (for foreground messages)
-  Future<void> _showLocalNotification(RemoteMessage message) async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'ride_requests', // channel ID
-      'Ride Requests', // channel name
-      channelDescription: 'Notifications for new ride requests',
-      importance: Importance.max,
-      priority: Priority.high,
-      showWhen: true,
-      enableVibration: true,
-      playSound: true,
-      icon: '@mipmap/ic_launcher',
-    );
-
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    const NotificationDetails notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _localNotifications.show(
-      message.hashCode,
-      message.notification?.title ?? 'New Notification',
-      message.notification?.body ?? '',
-      notificationDetails,
-      payload: jsonEncode(message.data),
-    );
-
-    print('✅ Local notification shown');
-  }
-
-  /// Handle notification tap
-  void _onNotificationTap(NotificationResponse response) {
-    print('🔔 Local notification tapped');
-    if (response.payload != null) {
-      final data = jsonDecode(response.payload!);
-      _handleNotificationTap(data);
-    }
   }
 
   /// Handle notification data (navigate to appropriate screen)
@@ -206,12 +129,18 @@ class FCMNotificationService {
 
   /// Update FCM token in Firestore for a user
   Future<void> updateUserFCMToken(String userId) async {
-    if (_fcmToken == null) {
-      print('⚠️ FCM token not available yet');
-      return;
-    }
-
     try {
+      // If token not available, try to get it fresh
+      if (_fcmToken == null) {
+        print('⚠️ FCM token not available, attempting to retrieve...');
+        _fcmToken = await _firebaseMessaging.getToken();
+        if (_fcmToken == null) {
+          print('❌ Failed to retrieve FCM token');
+          return;
+        }
+        print('✅ Retrieved FCM token: $_fcmToken');
+      }
+
       await _firestore.collection('users').doc(userId).update({
         'fcmToken': _fcmToken,
         'fcmTokenUpdatedAt': FieldValue.serverTimestamp(),

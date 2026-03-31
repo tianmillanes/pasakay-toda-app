@@ -20,11 +20,13 @@
     public static *** i(...);
 }
 
-# Obfuscate Firebase and Google services
+# Obfuscate Firebase, Google services and ML Kit
 -keep class com.google.firebase.** { *; }
 -keep class com.google.android.gms.** { *; }
+-keep class com.google.mlkit.** { *; }
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.**
+-dontwarn com.google.mlkit.**
 
 # Hide application signatures
 -keepattributes *Annotation*

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
 import '../../models/ride_model.dart';
+import '../../services/fare_service.dart';
 import '../../utils/app_theme.dart';
 import '../common/loading_skeleton.dart';
 
@@ -35,151 +36,114 @@ class StatsCard extends StatelessWidget {
               r.completedAt!.year == now.year;
         }).length;
 
-        return Semantics(
-          label: 'Your ride statistics. Total rides: ${completedRides.length}, This month: $thisMonthRides, Total spent: ${totalSpent.toStringAsFixed(0)} pesos',
-          child: Card(
-            elevation: 6,
-            shadowColor: Colors.black.withOpacity(0.15),
-            shape: RoundedRectangleBorder(
-              borderRadius: AppTheme.getStandardBorderRadius(),
-              side: BorderSide(
-                color: AppTheme.lightGray.withOpacity(0.5),
-                width: 1.5,
+        return Row(
+          children: [
+            Expanded(
+              child: _StatCard(
+                label: 'Total Rides',
+                value: completedRides.length.toString(),
+                icon: Icons.directions_car_rounded,
+                backgroundColor: const Color(0xFFE8F5FF),
+                iconColor: const Color(0xFF2196F3),
               ),
             ),
-            child: Container(
-              padding: AppTheme.getStandardPadding(),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: Colors.grey.shade200,
-                  width: 1,
-                ),
-                borderRadius: AppTheme.getStandardBorderRadius(),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.analytics_outlined,
-                        color: AppTheme.primaryBlue,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Your Stats',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _StatItem(
-                          icon: Icons.directions_car,
-                          label: 'Total Rides',
-                          value: completedRides.length.toString(),
-                          iconColor: const Color(0xFF757575),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _StatItem(
-                          icon: Icons.calendar_month,
-                          label: 'This Month',
-                          value: thisMonthRides.toString(),
-                          iconColor: const Color(0xFF757575),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _StatItem(
-                          icon: Icons.attach_money,
-                          label: 'Total Spent',
-                          value: '₱${totalSpent.toStringAsFixed(0)}',
-                          iconColor: const Color(0xFF757575),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatCard(
+                label: 'This Month',
+                value: thisMonthRides.toString(),
+                icon: Icons.calendar_today_rounded,
+                backgroundColor: const Color(0xFFE8F5E9),
+                iconColor: const Color(0xFF4CAF50),
               ),
             ),
-          ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatCard(
+                label: 'Spent',
+                value: FareService.formatFare(totalSpent),
+                icon: Icons.account_balance_wallet_rounded,
+                backgroundColor: const Color(0xFFFFF3E0),
+                iconColor: const Color(0xFFFF9800),
+              ),
+            ),
+          ],
         );
       },
     );
   }
 }
 
-class _StatItem extends StatelessWidget {
-  final IconData icon;
+class _StatCard extends StatelessWidget {
   final String label;
   final String value;
+  final IconData icon;
+  final Color backgroundColor;
   final Color iconColor;
 
-  const _StatItem({
-    required this.icon,
+  const _StatCard({
     required this.label,
     required this.value,
+    required this.icon,
+    required this.backgroundColor,
     required this.iconColor,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: '$label: $value',
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: iconColor.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFFBDBDBD),
-            width: 1.5,
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade100, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-        ),
-        child: Column(
-          children: [
-            ShaderMask(
-              shaderCallback: (bounds) => const LinearGradient(
-                colors: [Color(0xFF0D7CFF), Color(0xFF0052CC)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ).createShader(bounds),
-              child: Icon(
-                icon,
-                color: Colors.white,
-                size: 28,
-              ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Icon container
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(16),
             ),
-            const SizedBox(height: 12),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
+            child: Icon(
+              icon,
+              color: iconColor,
+              size: 32,
             ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.black,
-                fontWeight: FontWeight.w600,
-              ),
-              textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          // Value
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF1A1A1A),
+              letterSpacing: -0.5,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 6),
+          // Label
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade500,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }

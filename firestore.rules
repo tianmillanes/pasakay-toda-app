@@ -1,160 +1,71 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper functions for role checks
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-    
-    function isAdmin() {
-      return isAuthenticated() && getUserData().role == 'admin';
-    }
-    
-    function isDriver() {
-      return isAuthenticated() && getUserData().role == 'driver';
-    }
-    
-    function isPassenger() {
-      return isAuthenticated() && getUserData().role == 'passenger';
-    }
-    
-    function isApprovedDriver() {
-      return isDriver() && getUserData().isApproved == true;
-    }
-    
-    // Users collection - profiles
+
+    // Users collection
     match /users/{userId} {
-      // Anyone authenticated can read any user (for driver/passenger info display)
-      allow read: if isAuthenticated();
-      
-      // Users can create their own profile during registration
-      allow create: if isAuthenticated() && 
-                      request.auth.uid == userId &&
-                      request.resource.data.role in ['passenger', 'driver'];
-      
-      // Users can update their own profile (basic fields)
-      allow update: if isAuthenticated() && 
-                      request.auth.uid == userId &&
-                      // Prevent role escalation
-                      request.resource.data.role == resource.data.role &&
-                      // Prevent self-approval for drivers
-                      request.resource.data.isApproved == resource.data.isApproved;
-      
-      // Admins can update any user (for driver approval/management)
-      allow update: if isAdmin();
-      
-      // No one can delete users (soft delete only via admin)
-      allow delete: if false;
+      allow read: if request.auth != null;
+      // Allow user to write to their own doc, OR allow admin to write
+      allow write: if request.auth != null && (request.auth.uid == userId || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
-    
+    match /user_verifications/{userId} {
+      // Admin can read/write everything. User can only write/delete their own verification data.
+      allow read: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      allow write: if request.auth != null && (request.auth.uid == userId || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
     // Rides collection
     match /rides/{rideId} {
-      // Passengers can read their own rides
-      // Drivers can read rides assigned to them
-      // Admins can read all rides
-      allow read: if isAuthenticated() && (
-        resource.data.passengerId == request.auth.uid ||
-        resource.data.driverId == request.auth.uid ||
-        resource.data.assignedDriverId == request.auth.uid ||
-        isAdmin()
-      );
-      
-      // Only passengers can create rides
-      allow create: if isAuthenticated() &&
-                      isPassenger() &&
-                      request.resource.data.passengerId == request.auth.uid &&
-                      request.resource.data.status == 'pending' &&
-                      // Validate fare is positive and reasonable
-                      request.resource.data.fare >= 0 &&
-                      request.resource.data.fare <= 100000 &&
-                      // Ensure required fields exist
-                      request.resource.data.keys().hasAll([
-                        'passengerId', 'pickupLocation', 'dropoffLocation',
-                        'pickupAddress', 'dropoffAddress', 'fare', 'status'
-                      ]);
-      
-      // Drivers can update rides assigned to them (status changes)
-      allow update: if isAuthenticated() &&
-                      isApprovedDriver() &&
-                      resource.data.assignedDriverId == request.auth.uid &&
-                      // Validate status transitions
-                      (
-                        (resource.data.status == 'pending' && request.resource.data.status in ['accepted', 'cancelled']) ||
-                        (resource.data.status == 'accepted' && request.resource.data.status in ['driverOnWay', 'cancelled']) ||
-                        (resource.data.status == 'driverOnWay' && request.resource.data.status in ['driverArrived', 'cancelled']) ||
-                        (resource.data.status == 'driverArrived' && request.resource.data.status in ['inProgress', 'cancelled']) ||
-                        (resource.data.status == 'inProgress' && request.resource.data.status in ['completed', 'cancelled'])
-                      );
-      
-      // Passengers can cancel their own pending or failed rides
-      allow update: if isAuthenticated() &&
-                      resource.data.passengerId == request.auth.uid &&
-                      resource.data.status in ['pending', 'failed'] &&
-                      request.resource.data.status == 'cancelled';
-      
-      // Admins can update any ride
-      allow update: if isAdmin();
-      
-      // No one can delete rides (maintain audit trail)
-      allow delete: if false;
+      allow read, write: if request.auth != null;
     }
-    
+
     // Notifications collection
-    match /notifications/{notificationId} {
-      // Users can read their own notifications
-      allow read: if isAuthenticated() && 
-                    resource.data.userId == request.auth.uid;
-      
-      // System can create notifications (via Cloud Functions or service account)
-      allow create: if true; // Controlled by backend logic
-      
-      // Users can mark their own notifications as read
-      allow update: if isAuthenticated() && 
-                      resource.data.userId == request.auth.uid &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      
-      // Notifications auto-delete after 30 days (set TTL in backend)
-      allow delete: if isAdmin();
+    match /notifications/{notifId} {
+      allow read, write: if request.auth != null;
     }
-    
-    // System collection (queue, settings, etc.)
-    match /system/{document} {
-      // Anyone can read system settings/queue
-      allow read: if true; // Allow read access for app initialization
-      
-      // Only approved drivers can update queue
-      allow update: if isApprovedDriver() && document == 'queue';
-      
-      // Only admins can update other system settings
-      allow update: if isAdmin() && document != 'queue';
-      
-      // Allow system to create documents during initialization
-      allow create: if true;
-      
-      // No deletion
-      allow delete: if false;
+
+    // PasaBuy requests
+    match /pasabuy_requests/{requestId} {
+      allow read, write: if request.auth != null;
     }
-    
-    // User preferences collection
-    match /user_preferences/{userId} {
-      // Users can read/write their own preferences
-      allow read, write: if isAuthenticated() && 
-                           request.auth.uid == userId;
+
+    // Barangays / Geofences
+    match /barangays/{barangayId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
     }
-    
-    // Admin-only collections
-    match /admin_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
-      allow update, delete: if false; // Logs are immutable
+    match /barangays/{barangayId}/{sub=**} {
+      allow read, write: if request.auth != null;
     }
-    
-    // Block all other collections by default
+
+    // Driver queue
+    match /driver_queue/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // GCash QR
+    match /gcash_qr/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Settings (fare rules, maintenance mode, etc.)
+    match /settings/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    match /settings/{docId}/{sub=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // System settings
+    match /system/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Catch-all fallback - deny everything else
     match /{document=**} {
       allow read, write: if false;
     }

@@ -1,4 +1,4 @@
-name: pasakay
+name: Pasakay
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.6.0
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -40,20 +40,15 @@ dependencies:
   firebase_auth: ^6.1.1
   cloud_firestore: ^6.0.3
   firebase_messaging: ^16.0.3
-  flutter_local_notifications: ^18.0.1
-  # Google Maps and Location
-  google_maps_flutter: ^2.5.0
+  # Mapbox and Location
+  mapbox_maps_flutter: ^2.17.0
   geolocator: ^10.1.0
-  geocoding: ^2.1.1
 
   # State Management
   provider: ^6.1.1
 
   # HTTP and Networking
   http: ^1.1.2
-
-  # WebSocket (notifications removed)
-  web_socket_channel: ^2.4.0
 
   # Date and Time formatting
   intl: ^0.19.0
@@ -63,6 +58,44 @@ dependencies:
   encrypt: ^5.0.1
   crypto: ^3.0.3
 
+  # Email sending
+  mailer: ^6.0.1
+
+  # URL Launcher for phone calls
+  url_launcher: ^6.2.0
+
+  # Connectivity monitoring
+  connectivity_plus: ^6.0.3
+
+  # Image Picker for camera and gallery
+  image_picker: ^1.0.0
+
+  # Image processing and compression
+  image: ^4.1.0
+
+  # Environment variables (.env file support)
+  flutter_dotenv: ^5.1.0
+
+
+  # Text-to-Speech for voice navigation
+  flutter_tts: ^4.0.2
+
+  # Compass for heading/bearing
+  flutter_compass: ^0.8.0
+
+  # Path provider for offline maps
+  path_provider: ^2.1.5
+
+  # Biometric authentication
+  local_auth: ^2.3.0
+  google_nav_bar: ^5.0.7
+  timeago: ^3.7.1
+  google_fonts: ^6.2.1
+  firebase_app_check: ^0.4.1+4
+  shared_preferences: ^2.3.2
+  google_mlkit_text_recognition: ^0.15.1
+  google_sign_in: ^6.1.6
+  firebase_storage: ^13.0.6
 
 dev_dependencies:
   flutter_test:
@@ -91,14 +124,16 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - logo.png
+    - trike_logo.png
     - web/logo.png
     - assets/icon/icon.png
-    
+    - assets/motorcycle.glb
+    - .env
     
 flutter_icons:
-    android: "launcher_icon"
-    ios: true
-    image_path: "assets/icon/icon.png"  
+  android: "launcher_icon"
+  ios: true
+  image_path: "trike_logo.png"
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

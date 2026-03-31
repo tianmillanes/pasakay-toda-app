@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../../utils/app_theme.dart';
 import '../../services/address_search_service.dart';
 import '../../services/location_storage_service.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../models/lat_lng.dart';
 
 class LocationSearchBar extends StatefulWidget {
   final String hintText;
@@ -11,6 +12,7 @@ class LocationSearchBar extends StatefulWidget {
   final VoidCallback? onTap;
   final VoidCallback? onMapTap;
   final bool readOnly;
+  final LatLng? proximity;
 
   const LocationSearchBar({
     super.key,
@@ -20,6 +22,7 @@ class LocationSearchBar extends StatefulWidget {
     this.onTap,
     this.onMapTap,
     this.readOnly = false,
+    this.proximity,
   });
 
   @override
@@ -33,6 +36,7 @@ class _LocationSearchBarState extends State<LocationSearchBar> {
   bool _isSearching = false;
   bool _showResults = false;
   final FocusNode _focusNode = FocusNode();
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -51,6 +55,7 @@ class _LocationSearchBarState extends State<LocationSearchBar> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -64,30 +69,47 @@ class _LocationSearchBarState extends State<LocationSearchBar> {
   }
 
   Future<void> _searchAddresses(String query) async {
-    if (query.trim().isEmpty) {
-      setState(() {
-        _searchResults = [];
-        _isSearching = false;
-      });
-      return;
-    }
+    // Cancel previous timer
+    _debounceTimer?.cancel();
+    
+    // Set new timer for debounced search
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (query.trim().isEmpty) {
+        if (mounted) {
+          setState(() {
+            _searchResults = [];
+            _isSearching = false;
+          });
+        }
+        return;
+      }
 
-    setState(() {
-      _isSearching = true;
+      if (mounted) {
+        setState(() {
+          _isSearching = true;
+        });
+      }
+
+      try {
+        final results = await AddressSearchService.searchAddresses(
+          query,
+          proximity: widget.proximity,
+        );
+        if (mounted) {
+          setState(() {
+            _searchResults = results;
+            _isSearching = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _searchResults = [];
+            _isSearching = false;
+          });
+        }
+      }
     });
-
-    try {
-      final results = await AddressSearchService.searchAddresses(query);
-      setState(() {
-        _searchResults = results;
-        _isSearching = false;
-      });
-    } catch (e) {
-      setState(() {
-        _searchResults = [];
-        _isSearching = false;
-      });
-    }
   }
 
   void _selectAddress(String address, LatLng? coordinates) async {

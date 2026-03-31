@@ -1,46 +1,44 @@
 {
   "project_info": {
-    "project_number": "263659234453",
-    "firebase_url": "https://pasakay-toda-dispatch-default-rtdb.asia-southeast1.firebasedatabase.app",
-    "project_id": "pasakay-toda-dispatch",
-    "storage_bucket": "pasakay-toda-dispatch.firebasestorage.app"
+    "project_number": "503527035016",
+    "project_id": "pasakaytoda-bbb90",
+    "storage_bucket": "pasakaytoda-bbb90.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:263659234453:android:8461306d1df0da720de79c",
-        "android_client_info": {
-          "package_name": "com.example.todaapp"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDHg9_QrTR5wCuiMwznxdeXXBA68ySAO9U"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:263659234453:android:b5c92ea84abd58150de79c",
+        "mobilesdk_app_id": "1:503527035016:android:4c929baa3b306353e60f3d",
         "android_client_info": {
           "package_name": "com.toda.transport.booking"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "503527035016-3041fs03he9n2agj7pk62tkpli457v6r.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.toda.transport.booking",
+            "certificate_hash": "9b773c35e1e5631bda12e28c539746ba93baacaa"
+          }
+        },
+        {
+          "client_id": "503527035016-42pvm0glari1srgepe42ocr6cjd7tkmh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyDHg9_QrTR5wCuiMwznxdeXXBA68ySAO9U"
+          "current_key": "AIzaSyARP02JNcdIbF4kMk9muvrn9vftcchZ4rE"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "503527035016-42pvm0glari1srgepe42ocr6cjd7tkmh.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

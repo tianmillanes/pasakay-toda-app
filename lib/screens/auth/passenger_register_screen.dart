@@ -35,19 +35,28 @@ class _PassengerRegisterScreenState extends State<PassengerRegisterScreen> {
 
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
-
+    
     setState(() {
       _isLoading = true;
     });
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
+      
+      // Check if email or phone is already registered before proceeding
+      await authService.checkIfEmailOrPhoneExists(
+        _emailController.text.trim(),
+        _phoneController.text.trim(),
+      );
+      
       await authService.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
         name: _nameController.text.trim(),
         phone: _phoneController.text.trim(),
         role: UserRole.passenger,
+        barangayId: _selectedBarangay!.id,
+        barangayName: _selectedBarangay!.name,
       );
 
       if (mounted) {
@@ -56,7 +65,10 @@ class _PassengerRegisterScreenState extends State<PassengerRegisterScreen> {
       }
     } catch (e) {
       if (mounted) {
-        SnackbarHelper.showError(context, 'Registration failed: ${e.toString()}');
+        String errorMessage = e.toString();
+        // Remove Firebase error codes like [firebase_auth/email-already-in-use]
+        errorMessage = errorMessage.replaceAll(RegExp(r'\[firebase_auth/[^\]]+\]'), '').trim();
+        SnackbarHelper.showError(context, 'Registration failed: $errorMessage');
       }
     } finally {
       if (mounted) {
@@ -160,7 +172,7 @@ class _PassengerRegisterScreenState extends State<PassengerRegisterScreen> {
                     if (value == null || value.isEmpty) {
                       return 'Please enter your email';
                     }
-                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                    if (!RegExp(r'^[\w\-\.\+]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
                       return 'Please enter a valid email address';
                     }
                     return null;
@@ -195,6 +207,8 @@ class _PassengerRegisterScreenState extends State<PassengerRegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
+                const SizedBox(height: 16),
+
                 // Password field
                 TextFormField(
                   controller: _passwordController,
@@ -219,14 +233,14 @@ class _PassengerRegisterScreenState extends State<PassengerRegisterScreen> {
                     ),
                     filled: true,
                     fillColor: Colors.white,
-                    helperText: 'Minimum 6 characters',
+                    helperText: 'Minimum 8 characters',
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Please enter a password';
                     }
-                    if (value.length < 6) {
-                      return 'Password must be at least 6 characters';
+                    if (value.length < 8) {
+                      return 'Password must be at least 8 characters';
                     }
                     return null;
                   },

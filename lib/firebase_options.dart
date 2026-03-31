@@ -44,38 +44,41 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAf_1gcQqMqIpZWZ7c1HSnmfq1DWiQJMpY',
-    appId: '1:263659234453:web:43b22b7cb2da9b1b0de79c',
-    messagingSenderId: '263659234453',
-    projectId: 'pasakay-toda-dispatch',
-    authDomain: 'pasakay-toda-dispatch.firebaseapp.com',
-    storageBucket: 'pasakay-toda-dispatch.firebasestorage.app',
-    measurementId: 'G-XXXXXXXXXX',
+    apiKey: "AIzaSyARP02JNcdIbF4kMk9muvrn9vftcchZ4rE",
+    authDomain: "pasakaytoda-bbb90.firebaseapp.com",
+    projectId: "pasakaytoda-bbb90",
+    storageBucket: "pasakaytoda-bbb90.firebasestorage.app",
+    messagingSenderId: "503527035016",
+    appId: "1:503527035016:android:4c929baa3b306353e60f3d",
+    measurementId: "G-CTJRVR4DVC",
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAf_1gcQqMqIpZWZ7c1HSnmfq1DWiQJMpY',
-    appId: '1:263659234453:web:43b22b7cb2da9b1b0de79c',
-    messagingSenderId: "263659234453",
-    projectId: "pasakay-toda-dispatch",
-    storageBucket: "pasakay-toda-dispatch.firebasestorage.app",
+    apiKey: "AIzaSyARP02JNcdIbF4kMk9muvrn9vftcchZ4rE",
+    authDomain: "pasakaytoda-bbb90.firebaseapp.com",
+    projectId: "pasakaytoda-bbb90",
+    storageBucket: "pasakaytoda-bbb90.firebasestorage.app",
+    messagingSenderId: "503527035016",
+    appId: "1:503527035016:android:4c929baa3b306353e60f3d",
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyAf_1gcQqMqIpZWZ7c1HSnmfq1DWiQJMpY',
-    appId: '1:263659234453:ios:43b22b7cb2da9b1b0de79c',
-    messagingSenderId: '263659234453',
-    projectId: 'pasakay-toda-dispatch',
-    storageBucket: 'pasakay-toda-dispatch.firebasestorage.app',
-    iosBundleId: 'com.pasakay.toda',
+    apiKey: "AIzaSyBd014rhHg1NLj8noa-AW7bkztf_MzmLF4",
+    authDomain: "pasakay-toda-.firebaseapp.com",
+    projectId: "pasakay-v1",
+    storageBucket: "pasakay-toda.firebasestorage.app",
+    messagingSenderId: "563584335869",
+    appId: "1:563584335869:ios:YOUR_IOS_APP_ID_HERE",
+    measurementId: "G-CTJRVR4DVC",
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyAf_1gcQqMqIpZWZ7c1HSnmfq1DWiQJMpY',
-    appId: '1:263659234453:macos:43b22b7cb2da9b1b0de79c',
-    messagingSenderId: '263659234453',
-    projectId: 'pasakay-toda-dispatch',
-    storageBucket: 'pasakay-toda-dispatch.firebasestorage.app',
-    iosBundleId: 'com.pasakay.toda',
+    apiKey: "AIzaSyBd014rhHg1NLj8noa-AW7bkztf_MzmLF4",
+    authDomain: "pasakay-toda-.firebaseapp.com",
+    projectId: "pasakay-v1",
+    storageBucket: "pasakay-toda.firebasestorage.app",
+    messagingSenderId: "563584335869",
+    appId: "1:563584335869:macos:YOUR_MACOS_APP_ID_HERE",
+    measurementId: "G-CTJRVR4DVC",
   );
 }

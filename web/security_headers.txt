@@ -1,0 +1,160 @@
+# Web Security Headers Configuration
+# Add these headers to your web server (Nginx, Apache, Firebase Hosting, etc.)
+
+# Strict-Transport-Security: Force HTTPS for 1 year
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+
+# X-Content-Type-Options: Prevent MIME type sniffing
+X-Content-Type-Options: nosniff
+
+# X-Frame-Options: Prevent clickjacking
+X-Frame-Options: DENY
+
+# X-XSS-Protection: Enable XSS protection
+X-XSS-Protection: 1; mode=block
+
+# Content-Security-Policy: Restrict resource loading
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://firebase.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://maps.googleapis.com
+
+# Referrer-Policy: Control referrer information
+Referrer-Policy: strict-origin-when-cross-origin
+
+# Permissions-Policy: Control browser features
+Permissions-Policy: geolocation=(self), microphone=(), camera=(), payment=()
+
+# Additional: Disable caching for sensitive content
+Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0
+
+---
+
+## Firebase Hosting Configuration (firebase.json)
+
+Add this to your firebase.json for automatic HTTPS and security headers:
+
+{
+  "hosting": {
+    "public": "build/web",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Strict-Transport-Security",
+            "value": "max-age=31536000; includeSubDomains; preload"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "X-XSS-Protection",
+            "value": "1; mode=block"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "geolocation=(self), microphone=(), camera=(), payment=()"
+          }
+        ]
+      }
+    ],
+    "redirects": [
+      {
+        "source": "/index.html",
+        "destination": "/",
+        "type": 301
+      }
+    ]
+  }
+}
+
+---
+
+## Nginx Configuration Example
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name yourdomain.com;
+
+    # SSL/TLS Configuration
+    ssl_certificate /path/to/certificate.crt;
+    ssl_certificate_key /path/to/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Security Headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(), payment=()" always;
+
+    # Redirect HTTP to HTTPS
+    location / {
+        proxy_pass https://your-backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name yourdomain.com;
+    return 301 https://$server_name$request_uri;
+}
+
+---
+
+## Apache Configuration Example
+
+<VirtualHost *:443>
+    ServerName yourdomain.com
+    
+    # SSL/TLS Configuration
+    SSLEngine on
+    SSLCertificateFile /path/to/certificate.crt
+    SSLCertificateKeyFile /path/to/private.key
+    SSLProtocol TLSv1.2 TLSv1.3
+    SSLCipherSuite HIGH:!aNULL:!MD5
+    SSLHonorCipherOrder on
+
+    # Security Headers
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "geolocation=(self), microphone=(), camera=(), payment=()"
+
+    DocumentRoot /var/www/html
+</VirtualHost>
+
+# Redirect HTTP to HTTPS
+<VirtualHost *:80>
+    ServerName yourdomain.com
+    Redirect permanent / https://yourdomain.com/
+</VirtualHost>
+
+---
+
+## Verification
+
+Test your HTTPS configuration:
+- https://www.ssllabs.com/ssltest/
+- https://securityheaders.com/
+- https://observatory.mozilla.org/

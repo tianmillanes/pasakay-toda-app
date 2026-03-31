@@ -1,8 +1,26 @@
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
+import '../models/lat_lng.dart';
+import 'address_search_service.dart';
+
+// Custom exceptions for better error handling
+class LocationServiceException implements Exception {
+  final String message;
+  LocationServiceException(this.message);
+  
+  @override
+  String toString() => message;
+}
+
+class LocationPermissionException implements Exception {
+  final String message;
+  LocationPermissionException(this.message);
+  
+  @override
+  String toString() => message;
+}
 
 class LocationService extends ChangeNotifier {
   Position? _currentPosition;
@@ -19,6 +37,7 @@ class LocationService extends ChangeNotifier {
   // Geofence polygons
   List<List<double>>? _barangayGeofence;
   List<List<double>>? _todaTerminalGeofence;
+  String? _currentBarangayId; // Track which barangay's geofence is loaded
 
   Future<bool> requestLocationPermission() async {
     bool serviceEnabled;
@@ -26,19 +45,21 @@ class LocationService extends ChangeNotifier {
 
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      return false;
+      // Location services are disabled. Don't return false immediately,
+      // instead throw an exception that can be caught and handled properly
+      throw LocationServiceException('Location services are disabled. Please enable GPS/location services.');
     }
 
     permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        return false;
+        throw LocationPermissionException('Location permission denied. Please grant permission to access your location.');
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      return false;
+      throw LocationPermissionException('Location permission permanently denied. Please enable location permission in app settings.');
     }
 
     return true;
@@ -75,6 +96,12 @@ class LocationService extends ChangeNotifier {
       _currentPosition = position;
       notifyListeners();
       return position;
+    } on LocationServiceException catch (e) {
+      // Re-throw location service exceptions for UI to handle
+      rethrow;
+    } on LocationPermissionException catch (e) {
+      // Re-throw permission exceptions for UI to handle
+      rethrow;
     } catch (e) {
       print('Error getting current location: $e');
       return null;
@@ -110,71 +137,21 @@ class LocationService extends ChangeNotifier {
     double longitude,
   ) async {
     try {
-      print('🗺️ Getting address for coordinates: ($latitude, $longitude)');
+      print('Getting address for coordinates: ($latitude, $longitude)');
       
-      // Add timeout and better error handling
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        latitude,
-        longitude,
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          print('⏰ Geocoding timeout after 10 seconds');
-          return <Placemark>[];
-        },
+      final String? address = await AddressSearchService.getAddressFromCoordinates(
+        LatLng(latitude, longitude)
       );
       
-      if (placemarks.isNotEmpty) {
-        Placemark place = placemarks[0];
-        print('📍 Raw placemark data:');
-        print('   Street: ${place.street}');
-        print('   SubLocality: ${place.subLocality}');
-        print('   Locality: ${place.locality}');
-        print('   AdminArea: ${place.administrativeArea}');
-        print('   Country: ${place.country}');
-        
-        // Build address with available components
-        List<String> addressParts = [];
-        
-        if (place.street != null && place.street!.isNotEmpty && place.street != 'null') {
-          addressParts.add(place.street!);
-        }
-        if (place.subLocality != null && place.subLocality!.isNotEmpty && place.subLocality != 'null') {
-          addressParts.add(place.subLocality!);
-        }
-        if (place.locality != null && place.locality!.isNotEmpty && place.locality != 'null') {
-          addressParts.add(place.locality!);
-        }
-        if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty && place.administrativeArea != 'null') {
-          addressParts.add(place.administrativeArea!);
-        }
-        
-        String address;
-        if (addressParts.isNotEmpty) {
-          address = addressParts.join(', ');
-          print('✅ Address built from components: $address');
-        } else {
-          // Try using name or other fields as fallback
-          if (place.name != null && place.name!.isNotEmpty && place.name != 'null') {
-            address = place.name!;
-            print('✅ Using placemark name: $address');
-          } else {
-            address = 'Near ${place.locality ?? place.administrativeArea ?? 'Location'}';
-            print('⚠️ Using generic location name: $address');
-          }
-        }
-        
+      if (address != null && address.isNotEmpty) {
+        print('✅ Mapbox Geocoding Result: $address');
         return address;
-      } else {
-        print('⚠️ No placemarks found for coordinates');
-        return _getApproximateLocationName(latitude, longitude);
       }
-    } catch (e) {
-      print('❌ Error getting address: $e');
-      print('   Error type: ${e.runtimeType}');
       
-      // Provide a more user-friendly fallback with approximate area names
-      return _getApproximateLocationName(latitude, longitude);
+      return 'Unknown Location ($latitude, $longitude)';
+    } catch (e) {
+      print('Error in getAddressFromCoordinates: $e');
+      return 'Unknown Location ($latitude, $longitude)';
     }
   }
 
@@ -217,9 +194,19 @@ class LocationService extends ChangeNotifier {
     }
   }
 
-  Future<List<Location>> getCoordinatesFromAddress(String address) async {
+  Future<List<LatLng>> getCoordinatesFromAddress(String address) async {
     try {
-      return await locationFromAddress(address);
+      // Use current position as proximity if available
+      LatLng? proximity;
+      if (_currentPosition != null) {
+        proximity = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
+      }
+      
+      final LatLng? coords = await AddressSearchService.getCoordinatesFromAddress(
+        address, 
+        proximity: proximity,
+      );
+      return coords != null ? [coords] : [];
     } catch (e) {
       print('Error getting coordinates from address: $e');
       return [];
@@ -231,57 +218,147 @@ class LocationService extends ChangeNotifier {
   }
 
   // Geofencing functions
-  Future<void> loadGeofences({bool forceReload = false}) async {
-    if (!forceReload && areGeofencesLoaded()) {
+  Future<void> loadGeofences({String? barangayId, bool forceReload = false}) async {
+    // Check if we already have the correct barangay geofence loaded
+    if (!forceReload && barangayId != null && _currentBarangayId == barangayId && areGeofencesLoaded()) {
       if (kDebugMode) {
-        print('Geofences already loaded, skipping reload');
+        print('Geofences already loaded for barangay $barangayId, skipping reload');
       }
       return;
     }
     
     if (kDebugMode) {
-      print('Loading geofences from Firestore...');
+      print('Loading geofences from Firestore for barangayId: $barangayId...');
     }
     try {
-      // Load barangay geofence
-      DocumentSnapshot barangayDoc = await FirebaseFirestore.instance
-          .collection('system')
-          .doc('geofence')
-          .get();
+      // Load barangay-specific geofence if barangayId is provided
+      if (barangayId != null) {
+        DocumentSnapshot barangayDoc = await FirebaseFirestore.instance
+            .collection('barangays')
+            .doc(barangayId)
+            .get()
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                throw TimeoutException('Barangay geofence loading timed out');
+              },
+            );
 
-      if (barangayDoc.exists) {
-        Map<String, dynamic> data = barangayDoc.data() as Map<String, dynamic>;
-        var coordinates = data['coordinates'];
-        if (coordinates is List) {
-          _barangayGeofence = List<List<double>>.from(
-            coordinates.map((coord) => [
-              (coord['lat'] as num).toDouble(),
-              (coord['lng'] as num).toDouble(),
-            ]),
-          );
+        if (barangayDoc.exists) {
+          Map<String, dynamic> data = barangayDoc.data() as Map<String, dynamic>;
+          var coordinates = data['geofenceCoordinates'];
+          if (coordinates is List) {
+            _barangayGeofence = List<List<double>>.from(
+              coordinates.map((coord) {
+                if (coord is Map) {
+                  return [
+                    (coord['lat'] as num).toDouble(),
+                    (coord['lng'] as num).toDouble(),
+                  ];
+                }
+                return [0.0, 0.0];
+              }),
+            );
+            _currentBarangayId = barangayId;
+            if (kDebugMode) {
+              print('✅ Loaded barangay geofence for $barangayId with ${_barangayGeofence?.length ?? 0} points');
+            }
+          }
+        }
+      } else {
+        // Fallback to system geofence if no barangayId provided
+        DocumentSnapshot barangayDoc = await FirebaseFirestore.instance
+            .collection('system')
+            .doc('geofence')
+            .get()
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                throw TimeoutException('Barangay geofence loading timed out');
+              },
+            );
+
+        if (barangayDoc.exists) {
+          Map<String, dynamic> data = barangayDoc.data() as Map<String, dynamic>;
+          var coordinates = data['coordinates'];
+          if (coordinates is List) {
+            _barangayGeofence = List<List<double>>.from(
+              coordinates.map((coord) => [
+                (coord['lat'] as num).toDouble(),
+                (coord['lng'] as num).toDouble(),
+              ]),
+            );
+          }
         }
       }
 
-      // Load TODA terminal geofence
-      DocumentSnapshot terminalDoc = await FirebaseFirestore.instance
-          .collection('system')
-          .doc('terminal_geofence')
-          .get();
+      // Load TODA terminal geofence - per barangay if barangayId provided, otherwise system-wide
+      if (barangayId != null) {
+        // Load barangay-specific terminal geofence
+        DocumentSnapshot barangayDoc = await FirebaseFirestore.instance
+            .collection('barangays')
+            .doc(barangayId)
+            .get()
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                throw TimeoutException('Terminal geofence loading timed out');
+              },
+            );
 
-      if (terminalDoc.exists) {
-        Map<String, dynamic> data = terminalDoc.data() as Map<String, dynamic>;
-        var coordinates = data['coordinates'];
-        if (coordinates is List) {
-          _todaTerminalGeofence = List<List<double>>.from(
-            coordinates.map((coord) => [
-              (coord['lat'] as num).toDouble(),
-              (coord['lng'] as num).toDouble(),
-            ]),
-          );
+        if (barangayDoc.exists) {
+          Map<String, dynamic> data = barangayDoc.data() as Map<String, dynamic>;
+          var coordinates = data['terminalGeofenceCoordinates'];
+          if (coordinates is List) {
+            _todaTerminalGeofence = List<List<double>>.from(
+              coordinates.map((coord) {
+                if (coord is Map) {
+                  return [
+                    (coord['lat'] as num).toDouble(),
+                    (coord['lng'] as num).toDouble(),
+                  ];
+                }
+                return [0.0, 0.0];
+              }),
+            );
+            if (kDebugMode) {
+              print('✅ Loaded barangay terminal geofence for $barangayId with ${_todaTerminalGeofence?.length ?? 0} points');
+            }
+          }
         }
+      } else {
+        // Fallback to system terminal geofence
+        DocumentSnapshot terminalDoc = await FirebaseFirestore.instance
+            .collection('system')
+            .doc('terminal_geofence')
+            .get()
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                throw TimeoutException('Terminal geofence loading timed out');
+              },
+            );
+
+        if (terminalDoc.exists) {
+          Map<String, dynamic> data = terminalDoc.data() as Map<String, dynamic>;
+          var coordinates = data['coordinates'];
+          if (coordinates is List) {
+            _todaTerminalGeofence = List<List<double>>.from(
+              coordinates.map((coord) => [
+                (coord['lat'] as num).toDouble(),
+                (coord['lng'] as num).toDouble(),
+              ]),
+            );
+          }
+        }
+      }
+      
+      if (kDebugMode) {
+        print('✅ Geofences loaded successfully');
       }
     } catch (e) {
       print('Error loading geofences: $e');
+      // Don't rethrow - allow app to continue even if geofences fail to load
     }
   }
 
@@ -313,9 +390,29 @@ class LocationService extends ChangeNotifier {
         return true;
       }
       
+      // Check if point is on an edge (optional but improves robustness)
+      // This is a simplified distance-to-segment check
+      double d2 = (xj - xi) * (xj - xi) + (yj - yi) * (yj - yi);
+      if (d2 > 0) {
+        double t = ((lat - xi) * (xj - xi) + (lon - yi) * (yj - yi)) / d2;
+        if (t >= 0 && t <= 1) {
+          double projectionLat = xi + t * (xj - xi);
+          double projectionLon = yi + t * (yj - yi);
+          double dist2 = (lat - projectionLat) * (lat - projectionLat) + (lon - projectionLon) * (lon - projectionLon);
+          if (dist2 < tolerance * tolerance) {
+            if (kDebugMode) {
+              print('Point is on edge between $i and $j');
+            }
+            return true;
+          }
+        }
+      }
+      
       // Ray casting intersection check
+      // We use a small epsilon for the longitude check to avoid horizontal edge issues
+      const double epsilon = 0.0000000001;
       if (((yi > lon) != (yj > lon)) &&
-          (lat < (xj - xi) * (lon - yi) / (yj - yi) + xi)) {
+          (lat < (xj - xi) * (lon - yi) / (yj - yi + epsilon) + xi)) {
         intersectCount++;
       }
     }
@@ -328,16 +425,6 @@ class LocationService extends ChangeNotifier {
       print('  Polygon vertices: ${polygon.length}');
       print('  Ray intersections: $intersectCount');
       print('  Result: $isInside');
-      
-      // Calculate minimum distance to polygon boundary for debugging
-      double minDistance = double.infinity;
-      for (int i = 0; i < polygon.length; i++) {
-        double distance = calculateDistance(lat, lon, polygon[i][0], polygon[i][1]);
-        if (distance < minDistance) {
-          minDistance = distance;
-        }
-      }
-      print('  Minimum distance to boundary: ${minDistance.toStringAsFixed(2)}m');
     }
 
     return isInside;
@@ -446,12 +533,6 @@ class LocationService extends ChangeNotifier {
       print('Distance to geofence center: ${distanceToCenter.toStringAsFixed(2)} meters');
       print('Point-in-polygon result: $isInside');
       
-      // TEMPORARY: Allow drivers within 2km of geofence center for testing
-      if (!isInside && distanceToCenter <= 2000.0) {
-        print('⚠️ TEMPORARY OVERRIDE: Driver outside geofence but within 2km - allowing access for testing');
-        isInside = true;
-      }
-      
       if (!isInside) {
         print('GEOFENCE VALIDATION FAILED: Driver is outside the terminal geofence');
         print('Driver location: ($lat, $lon)');
@@ -461,7 +542,7 @@ class LocationService extends ChangeNotifier {
       }
     }
     
-    // Return ONLY the exact geofence validation result - no overrides
+    // Return ONLY the exact geofence validation result
     return isInside;
   }
 
@@ -532,8 +613,9 @@ class LocationService extends ChangeNotifier {
     try {
       final position = await getCurrentLocation();
       if (position != null) {
+        // Driver data is stored in 'users' collection with role='driver'
         await FirebaseFirestore.instance
-            .collection('drivers')
+            .collection('users')
             .doc(_trackingDriverId!)
             .update({
               'currentLocation': GeoPoint(
@@ -543,6 +625,7 @@ class LocationService extends ChangeNotifier {
               'lastLocationUpdate': FieldValue.serverTimestamp(),
               'speed': position.speed,
               'heading': position.heading,
+              'accuracy': position.accuracy,
             });
       }
     } catch (e) {
@@ -555,7 +638,7 @@ class LocationService extends ChangeNotifier {
   /// Get real-time location stream for a specific driver
   Stream<GeoPoint?> getDriverLocationStream(String driverId) {
     return FirebaseFirestore.instance
-        .collection('drivers')
+        .collection('users')
         .doc(driverId)
         .snapshots()
         .map((doc) {

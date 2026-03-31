@@ -1,0 +1,12 @@
+{
+  "name": "toda-firestore-scripts",
+  "version": "1.0.0",
+  "description": "Firestore initialization scripts for TODA app",
+  "main": "initialize_firestore.js",
+  "scripts": {
+    "init": "node initialize_firestore.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}

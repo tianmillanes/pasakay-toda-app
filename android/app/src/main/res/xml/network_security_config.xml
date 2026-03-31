@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Enforce HTTPS for all domains -->
+    <domain-config cleartextTrafficPermitted="false">
+        <!-- Firebase domains - HTTPS only -->
+        <domain includeSubdomains="true">firebase.google.com</domain>
+        <domain includeSubdomains="true">firebaseio.com</domain>
+        <domain includeSubdomains="true">firestore.googleapis.com</domain>
+        <domain includeSubdomains="true">storage.googleapis.com</domain>
+        <domain includeSubdomains="true">identitytoolkit.googleapis.com</domain>
+        <domain includeSubdomains="true">securetoken.googleapis.com</domain>
+        
+        <!-- Google APIs - HTTPS only -->
+        <domain includeSubdomains="true">googleapis.com</domain>
+        <domain includeSubdomains="true">google.com</domain>
+        
+        <!-- Maps API - HTTPS only -->
+        <domain includeSubdomains="true">maps.googleapis.com</domain>
+        <domain includeSubdomains="true">mts.googleapis.com</domain>
+        
+        <!-- Twilio (if used) - HTTPS only -->
+        <domain includeSubdomains="true">twilio.com</domain>
+        
+        <!-- Add your backend domain here -->
+        <!-- <domain includeSubdomains="true">your-backend.com</domain> -->
+        
+        <!-- Certificate pinning disabled - using system trust store instead -->
+        <!-- Uncomment and update pins if needed in production -->
+        <!-- <pin-set expiration="2026-01-01">
+            <pin digest="SHA-256">lFQwGWAHw2l7bkANXyJlkbZjXQQEoMvKMx8Uj5Fz5Qs=</pin>
+            <pin digest="SHA-256">jQJTbIh0grw0/1TkHSumWWYPgc9YcPLy+Lfqa/5eQAc=</pin>
+        </pin-set> -->
+    </domain-config>
+    
+    <!-- Disable cleartext traffic globally (except for localhost for debugging) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

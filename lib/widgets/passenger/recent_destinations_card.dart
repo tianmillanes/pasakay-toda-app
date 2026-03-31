@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
 import '../../models/ride_model.dart';
-import '../../utils/app_theme.dart';
-import '../../screens/passenger/book_ride_screen.dart';
-import '../../widgets/usability_helpers.dart';
 
 class RecentDestinationsCard extends StatelessWidget {
   const RecentDestinationsCard({super.key});
@@ -24,388 +20,288 @@ class RecentDestinationsCard extends StatelessWidget {
       stream: firestoreService.getUserRides(authService.currentUser!.uid),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return Card(
-            elevation: 6,
-            shadowColor: Colors.black.withOpacity(0.15),
-            shape: RoundedRectangleBorder(
-              borderRadius: AppTheme.getStandardBorderRadius(),
-              side: BorderSide(
-                color: AppTheme.lightGray.withOpacity(0.5),
-                width: 1.5,
-              ),
-            ),
-            child: Container(
-              padding: AppTheme.getStandardPadding(),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: Colors.grey.shade200,
-                  width: 1,
-                ),
-                borderRadius: AppTheme.getStandardBorderRadius(),
-              ),
-              height: 150,
-              child: const Center(
-                child: ProgressIndicatorWithMessage(
-                  message: 'Loading destinations...',
-                ),
-              ),
-            ),
-          );
+          return _buildLoadingSkeleton();
         }
 
         final rides = snapshot.data ?? [];
         final completedRides = rides
-            .where((r) => r.status == RideStatus.completed && r.completedAt != null)
-            .toList()
-          ..sort((a, b) => b.completedAt!.compareTo(a.completedAt!));
+            .where((r) => r.status == RideStatus.completed && r.dropoffAddress.isNotEmpty)
+            .toList();
 
-        // Get unique recent destinations (last 5, sorted by most recent)
-        final Map<String, Map<String, dynamic>> uniqueDestinations = {};
-        for (final ride in completedRides) {
-          final key = ride.dropoffAddress.toLowerCase().trim();
-          if (!uniqueDestinations.containsKey(key)) {
-            uniqueDestinations[key] = {
-              'ride': ride,
-              'lastUsed': ride.completedAt!,
-            };
-          } else {
-            // Keep the most recent occurrence
-            final existing = uniqueDestinations[key]!['lastUsed'] as DateTime;
-            if (ride.completedAt!.isAfter(existing)) {
-              uniqueDestinations[key] = {
-                'ride': ride,
-                'lastUsed': ride.completedAt!,
-              };
-            }
+        // Get unique recent destinations (last 5)
+        final recentDestinations = <String, RideModel>{};
+        for (final ride in completedRides.reversed) {
+          if (ride.dropoffAddress.isNotEmpty && 
+              !recentDestinations.containsKey(ride.dropoffAddress)) {
+            recentDestinations[ride.dropoffAddress] = ride;
+            if (recentDestinations.length >= 5) break;
           }
         }
 
-        // Sort by most recent and take top 5
-        final recentDestinations = uniqueDestinations.values
-            .toList()
-          ..sort((a, b) => (b['lastUsed'] as DateTime).compareTo(a['lastUsed'] as DateTime));
-        
-        final displayDestinations = recentDestinations
-            .take(5)
-            .map((item) => item['ride'] as RideModel)
-            .toList();
-
-        if (displayDestinations.isEmpty) {
-          return Card(
-            elevation: 6,
-            shadowColor: Colors.black.withOpacity(0.15),
-            shape: RoundedRectangleBorder(
-              borderRadius: AppTheme.getStandardBorderRadius(),
-              side: BorderSide(
-                color: AppTheme.lightGray.withOpacity(0.5),
-                width: 1.5,
-              ),
-            ),
-            child: Container(
-              padding: AppTheme.getStandardPadding(),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: Colors.grey.shade200,
-                  width: 1,
-                ),
-                borderRadius: AppTheme.getStandardBorderRadius(),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.location_history,
-                        color: Color(0xFFFF5252),
-                        size: 24,
-                      ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Recent Destinations',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  EmptyStateWidget(
-                    message: 'No recent destinations yet',
-                    subtitle: 'Complete your first ride to see them here!',
-                    icon: Icons.location_on_outlined,
-                  ),
-                ],
-              ),
-            ),
-          );
+        if (recentDestinations.isEmpty) {
+          return _buildEmptyState();
         }
 
-        return Semantics(
-          label: 'Recent destinations. ${displayDestinations.length} destinations available',
-          child: Card(
-            elevation: 6,
-            shadowColor: Colors.black.withOpacity(0.15),
-            shape: RoundedRectangleBorder(
-              borderRadius: AppTheme.getStandardBorderRadius(),
-              side: BorderSide(
-                color: AppTheme.lightGray.withOpacity(0.5),
-                width: 1.5,
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.grey.shade100, width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
-            ),
-            child: Container(
-              padding: AppTheme.getStandardPadding(),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: Colors.grey.shade200,
-                  width: 1,
-                ),
-                borderRadius: AppTheme.getStandardBorderRadius(),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.location_history,
-                        color: Color(0xFFFF5252),
-                        size: 24,
-                      ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Recent Destinations',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F5FF),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.location_on_rounded,
+                      color: Color(0xFF2196F3),
+                      size: 24,
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  ...displayDestinations.map((ride) => _DestinationItem(
-                    ride: ride,
-                    onTap: () => _quickBookToDestination(context, ride),
-                  )),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Text(
+                      'Recent Destinations',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1A1A1A),
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
                 ],
               ),
-            ),
+              const SizedBox(height: 20),
+              ...recentDestinations.entries.map((entry) => 
+                _buildDestinationItem(entry.key, entry.value)
+              ),
+            ],
           ),
         );
       },
     );
   }
 
-  Future<void> _quickBookToDestination(BuildContext context, RideModel ride) async {
-    // First, check for online drivers
-    final firestoreService = Provider.of<FirestoreService>(context, listen: false);
-    
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return const Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFF2D2D2D),
-          ),
-        );
-      },
-    );
-
-    try {
-      // Check for online drivers
-      final drivers = await firestoreService.getOnlineDrivers();
-      
-      // Close loading dialog
-      if (context.mounted) Navigator.of(context).pop();
-      
-      if (drivers.isEmpty) {
-        // No drivers available
-        if (context.mounted) {
-          showDialog(
-            context: context,
-            builder: (BuildContext context) {
-              return AlertDialog(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                title: Row(
-                  children: [
-                    Icon(Icons.warning, color: Colors.orange[600]),
-                    const SizedBox(width: 8),
-                    const Text('No Drivers Available'),
-                  ],
-                ),
-                content: const Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Sorry, there are currently no drivers online in your area.',
-                      style: TextStyle(fontSize: 16),
-                    ),
-                    SizedBox(height: 12),
-                    Text(
-                      'Please try again in a few minutes.',
-                      style: TextStyle(fontSize: 14, color: Colors.black),
-                    ),
-                  ],
-                ),
-                actions: [
-                  ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2D2D2D),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'OK',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-              );
-            },
-          );
-        }
-        return;
-      }
-      
-      // Drivers are available, navigate to BookRideScreen with ONLY pre-filled destination
-      if (context.mounted) {
-        final dropoffLocation = LatLng(
-          ride.dropoffLocation.latitude,
-          ride.dropoffLocation.longitude,
-        );
-        
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => BookRideScreen(
-              // Only pre-fill destination, let passenger choose pickup
-              initialDropoffLocation: dropoffLocation,
-              initialDropoffAddress: ride.dropoffAddress,
+  Widget _buildDestinationItem(String destination, RideModel ride) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: Color(0xFF2196F3),
+              shape: BoxShape.circle,
             ),
           ),
-        );
-        
-        SnackbarHelper.showSuccess(
-          context,
-          '${drivers.length} ${drivers.length == 1 ? 'driver' : 'drivers'} available',
-          seconds: 2,
-        );
-      }
-    } catch (e) {
-      // Close loading dialog if still open
-      if (context.mounted) Navigator.of(context).pop();
-      
-      if (context.mounted) {
-        SnackbarHelper.showError(
-          context,
-          'Error checking driver availability',
-          seconds: 3,
-        );
-      }
-    }
-  }
-}
-
-class _DestinationItem extends StatelessWidget {
-  final RideModel ride;
-  final VoidCallback onTap;
-
-  const _DestinationItem({
-    required this.ride,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Book ride to ${ride.dropoffAddress}, estimated fare ${ride.fare.toStringAsFixed(2)} pesos',
-      button: true,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(
-                  color: const Color(0xFFBDBDBD),
-                  width: 1.5,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  destination,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A1A),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.location_on,
-                    color: Color(0xFFFF5252),
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          ride.dropoffAddress,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF2D2D2D),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.payments_outlined,
-                              size: 12,
-                              color: Color(0xFF757575),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '₱${ride.fare.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.black,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                if (ride.completedAt != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatDate(ride.completedAt!),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                  const Icon(
-                    Icons.arrow_forward_ios,
-                    size: 14,
-                    color: Color(0xFF757575),
-                  ),
                 ],
-              ),
+              ],
             ),
           ),
-        ),
+          Icon(
+            Icons.arrow_forward_ios_rounded,
+            size: 16,
+            color: Colors.grey.shade400,
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildEmptyState() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade100, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              Icons.location_on_outlined,
+              size: 48,
+              color: Colors.grey.shade400,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No Recent Destinations',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your recent destinations will appear here after completing rides',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingSkeleton() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade100, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Container(
+                width: 150,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          ...List.generate(3, (index) => Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: 100,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          )),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final difference = now.difference(date);
+
+    if (difference.inDays == 0) {
+      return 'Today';
+    } else if (difference.inDays == 1) {
+      return 'Yesterday';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} days ago';
+    } else {
+      return '${date.day}/${date.month}/${date.year}';
+    }
   }
 }

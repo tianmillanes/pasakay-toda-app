@@ -77,76 +77,96 @@ class RideCardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppTheme.getStandardBorderRadius(),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.grey.shade100, width: 2),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Status and date row
-            Row(
+      child: Column(
+        children: [
+          // Header skeleton
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 LoadingSkeleton(
-                  width: 80,
+                  width: 70,
                   height: 24,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                const LoadingSkeleton(width: 100, height: 16),
+                const LoadingSkeleton(width: 80, height: 12),
               ],
             ),
-            const SizedBox(height: 12),
-            
-            // Pickup location
-            Row(
+          ),
+          
+          // Route skeleton
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
               children: [
-                LoadingSkeleton(
-                  width: 16,
-                  height: 16,
-                  borderRadius: BorderRadius.circular(8),
+                _buildRouteSkeleton(),
+                const Padding(
+                  padding: EdgeInsets.only(left: 14, top: 4, bottom: 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(
+                      height: 20,
+                      child: VerticalDivider(width: 2, thickness: 2, color: Color(0xFFF5F5F5)),
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: LoadingSkeleton(height: 16),
-                ),
+                _buildRouteSkeleton(),
               ],
             ),
-            const SizedBox(height: 8),
-            
-            // Dropoff location
-            Row(
-              children: [
-                LoadingSkeleton(
-                  width: 16,
-                  height: 16,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: LoadingSkeleton(height: 16),
-                ),
-              ],
+          ),
+
+          // Metrics footer skeleton
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: const BoxDecoration(
+              color: Color(0xFFFAFAFA),
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(28),
+                bottomRight: Radius.circular(28),
+              ),
             ),
-            const SizedBox(height: 12),
-            
-            // Fare and duration
-            const Row(
+            child: const Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                LoadingSkeleton(width: 80, height: 20),
-                LoadingSkeleton(width: 100, height: 16),
+                LoadingSkeleton(width: 60, height: 25),
+                LoadingSkeleton(width: 60, height: 25),
+                LoadingSkeleton(width: 60, height: 25),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+  Widget _buildRouteSkeleton() => Row(
+    children: [
+      LoadingSkeleton(
+        width: 30,
+        height: 30,
+        borderRadius: BorderRadius.circular(15),
+      ),
+      const SizedBox(width: 16),
+      const Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LoadingSkeleton(width: 40, height: 8),
+            SizedBox(height: 6),
+            LoadingSkeleton(width: double.infinity, height: 14),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 class StatsCardSkeleton extends StatelessWidget {
@@ -154,85 +174,31 @@ class StatsCardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppTheme.getStandardBorderRadius(),
-      ),
-      child: Container(
-        padding: AppTheme.getStandardPadding(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Row(
-              children: [
-                LoadingSkeleton(
-                  width: 24,
-                  height: 24,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                const SizedBox(width: 8),
-                const LoadingSkeleton(width: 100, height: 18),
-              ],
-            ),
-            const SizedBox(height: 16),
-            
-            // Stats row
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    children: [
-                      LoadingSkeleton(
-                        width: 40,
-                        height: 40,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      const SizedBox(height: 8),
-                      const LoadingSkeleton(width: 30, height: 16),
-                      const SizedBox(height: 4),
-                      const LoadingSkeleton(width: 50, height: 12),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    children: [
-                      LoadingSkeleton(
-                        width: 40,
-                        height: 40,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      const SizedBox(height: 8),
-                      const LoadingSkeleton(width: 20, height: 16),
-                      const SizedBox(height: 4),
-                      const LoadingSkeleton(width: 60, height: 12),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    children: [
-                      LoadingSkeleton(
-                        width: 40,
-                        height: 40,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      const SizedBox(height: 8),
-                      const LoadingSkeleton(width: 40, height: 16),
-                      const SizedBox(height: 4),
-                      const LoadingSkeleton(width: 50, height: 12),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
+    return Row(
+      children: List.generate(3, (index) => Expanded(
+        child: Container(
+          margin: EdgeInsets.only(right: index == 2 ? 0 : 12),
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.grey.shade50, width: 1.5),
+          ),
+          child: Column(
+            children: [
+              LoadingSkeleton(
+                width: 40,
+                height: 40,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              const SizedBox(height: 12),
+              const LoadingSkeleton(width: 30, height: 20),
+              const SizedBox(height: 4),
+              const LoadingSkeleton(width: 50, height: 10),
+            ],
+          ),
         ),
-      ),
+      )),
     );
   }
 }

@@ -1,39 +1,167 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
+import 'config/credentials_config.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
 import 'services/location_service.dart';
 import 'services/fcm_notification_service.dart';
+import 'services/https_enforcer.dart';
+import 'services/connectivity_service.dart';
 import 'utils/app_theme.dart';
 import 'screens/splash_screen.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/role_selection_screen.dart';
-import 'screens/auth/passenger_register_screen.dart';
-import 'screens/auth/driver_register_screen.dart';
+import 'screens/auth/passenger_register_screen_with_verification.dart';
+import 'screens/auth/driver_register_screen_with_verification.dart';
 import 'screens/passenger/passenger_dashboard.dart';
 import 'screens/driver/driver_dashboard.dart';
 import 'screens/driver/driver_registration_screen.dart';
 import 'screens/admin/admin_dashboard.dart';
+import 'services/route_guard.dart';
+import 'models/user_model.dart';
 
 void main() async {
   try {
-    print('🚀 Starting app initialization...');
     WidgetsFlutterBinding.ensureInitialized();
+    print('Starting app initialization...');
 
     print('🔥 Initializing Firebase...');
     try {
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-      print('✅ Firebase initialized successfully');
-    } catch (e) {
-      if (e.toString().contains('duplicate-app')) {
-        print('✅ Firebase already initialized, continuing...');
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+        print('✅ Firebase initialized for the first time');
       } else {
-        print('⚠️ Firebase initialization error: $e');
+        print('ℹ️ Firebase already initialized, skipping...');
+      }
+      
+      // Safe initialization of persistence and settings
+      try {
+        await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+      } catch (e) {
+        print('⚠️ Warning: Failed to set Auth persistence: $e');
+      }
+      
+      try {
+        // Disable Firestore persistence caching to ensure fresh data
+        FirebaseFirestore.instance.settings = const Settings(
+          persistenceEnabled: false,
+        );
+      } catch (e) {
+        // This often fails if Firestore was already accessed, which is fine
+        print('ℹ️ Note: Firestore settings already applied or could not be changed: $e');
+      }
+    } catch (e) {
+      if (e.toString().contains('duplicate-app') || e.toString().contains('already-exists')) {
+        print('✅ Firebase already initialized (caught exception)');
+      } else {
+        print('❌ Firebase initialization failed: $e');
         rethrow;
+      }
+    }
+
+    // Load environment variables after Firebase is ready
+    print('🔐 Loading environment variables...');
+    await CredentialsConfig.initialize();
+    print('✅ Environment variables loaded');
+
+    print('🎉 Essential initialization complete, launching app...');
+    runApp(const PasakayApp());
+    
+    // Initialize non-essential services in background after app starts
+    _initializeBackgroundServices();
+  } catch (e, stackTrace) {
+    print('❌ CRITICAL ERROR during app initialization: $e');
+    print('Stack trace: $stackTrace');
+    
+    // Ensure WidgetsFlutterBinding is initialized for the error UI
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    runApp(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 80, color: Colors.redAccent),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'App Initialization Error', 
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: Text(
+                      e.toString(),
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        // Restart the app by calling main() again
+                        main();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('Retry Initialization', style: TextStyle(fontSize: 16)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
+}
+
+// Initialize non-essential services in background
+Future<void> _initializeBackgroundServices() async {
+  try {
+    print('🔒 Initializing HTTPS enforcement...');
+    HTTPSConfig.logConfiguration();
+    print('✅ HTTPS enforcement initialized');
+
+    print('🗺️ Initializing Mapbox...');
+    // Skip Mapbox initialization on web due to bool.fromEnvironment issue
+    if (kIsWeb) {
+      print('⚠️ Mapbox initialization skipped on web platform');
+    } else {
+      try {
+        mapbox.MapboxOptions.setAccessToken(CredentialsConfig.mapboxAccessToken);
+        print('✅ Mapbox initialized');
+      } catch (e) {
+        print('⚠️ Mapbox initialization failed: $e');
+        print('📱 App will continue without Mapbox');
       }
     }
 
@@ -48,185 +176,18 @@ void main() async {
       print('📱 App will continue without push notifications');
     }
 
-    // Initialize Firestore settings with robust error handling
-    print('📊 Initializing Firestore settings...');
+    print('🌐 Initializing Connectivity Service...');
     try {
-      await initializeFirestore().timeout(Duration(seconds: 15));
-      print('✅ Firestore initialized successfully');
+      await ConnectivityService().initialize();
+      print('✅ Connectivity Service initialized successfully');
     } catch (e) {
-      print('⚠️ Warning: Firestore initialization failed: $e');
-      print('📱 App will continue with default settings');
-      // Continue app startup - the app can work without initial Firestore setup
+      print('⚠️ Warning: Connectivity Service initialization failed: $e');
+      print('📱 App will continue without connectivity monitoring');
     }
 
-    print('🎉 App initialization complete, launching app...');
-    runApp(const PasakayApp());
-  } catch (e, stackTrace) {
-    print('❌ CRITICAL ERROR during app initialization: $e');
-    print('Stack trace: $stackTrace');
-    
-    // Run app anyway with minimal setup
-    runApp(MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.error, size: 64, color: Colors.blue),
-              SizedBox(height: 16),
-              Text('App initialization failed', 
-                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              SizedBox(height: 8),
-              Text('Error: $e', textAlign: TextAlign.center),
-              SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () {
-                  // Restart the app
-                  main();
-                },
-                child: Text('Retry'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ));
-  }
-}
-
-Future<void> initializeFirestore() async {
-  final firestore = FirebaseFirestore.instance;
-
-  // Initialize barangay geofence if it doesn't exist
-  try {
-    print('🗺️ Checking barangay geofence...');
-    final geofenceDoc = await firestore
-        .collection('system')
-        .doc('geofence')
-        .get()
-        .timeout(Duration(seconds: 5));
-    
-    if (!geofenceDoc.exists) {
-      final barangayCoordinates = [
-        {'lat': 14.6020, 'lng': 120.9850},
-        {'lat': 14.6040, 'lng': 120.9870},
-        {'lat': 14.6060, 'lng': 120.9890},
-        {'lat': 14.6050, 'lng': 120.9910},
-        {'lat': 14.6030, 'lng': 120.9890},
-        {'lat': 14.6010, 'lng': 120.9870},
-      ];
-      await firestore.collection('system').doc('geofence').set({
-        'coordinates': barangayCoordinates,
-        'name': 'Service Area',
-        'type': 'barangay',
-      });
-      print('✅ Barangay geofence initialized');
-    } else {
-      print('✅ Barangay geofence already exists');
-    }
+    print('🎉 Background services initialization complete');
   } catch (e) {
-    print('⚠️ Failed to initialize barangay geofence: $e');
-  }
-
-  // Initialize terminal geofence
-  try {
-    print('🏢 Checking terminal geofence...');
-    final terminalDoc = await firestore
-        .collection('system')
-        .doc('terminal_geofence')
-        .get()
-        .timeout(Duration(seconds: 5));
-    
-    if (!terminalDoc.exists) {
-      final terminalCoordinates = [
-        {'lat': 14.6020, 'lng': 120.9850},
-        {'lat': 14.6025, 'lng': 120.9845},
-        {'lat': 14.6030, 'lng': 120.9855},
-        {'lat': 14.6025, 'lng': 120.9860},
-        {'lat': 14.6015, 'lng': 120.9855},
-      ];
-      await firestore.collection('system').doc('terminal_geofence').set({
-        'coordinates': terminalCoordinates,
-        'name': 'TODA Terminal',
-        'type': 'terminal',
-      });
-      print('✅ Terminal geofence initialized');
-    } else {
-      print('✅ Terminal geofence already exists');
-    }
-  } catch (e) {
-    print('⚠️ Failed to initialize terminal geofence: $e');
-  }
-
-  // Initialize maintenance mode setting
-  try {
-    print('🔧 Checking maintenance mode...');
-    final maintenanceDoc = await firestore
-        .collection('system')
-        .doc('maintenance')
-        .get()
-        .timeout(Duration(seconds: 5));
-    
-    if (!maintenanceDoc.exists) {
-      await firestore.collection('system').doc('maintenance').set({
-        'enabled': false,
-        'message': 'System is under maintenance. Please try again later.',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      print('✅ Maintenance mode initialized');
-    } else {
-      print('✅ Maintenance mode already exists');
-    }
-  } catch (e) {
-    print('⚠️ Failed to initialize maintenance mode: $e');
-  }
-
-  // Initialize queue
-  try {
-    print('🚗 Checking driver queue...');
-    final queueDoc = await firestore
-        .collection('system')
-        .doc('queue')
-        .get()
-        .timeout(Duration(seconds: 5));
-    
-    if (!queueDoc.exists) {
-      await firestore.collection('system').doc('queue').set({
-        'drivers': [],
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      print('✅ Driver queue initialized');
-    } else {
-      print('✅ Driver queue already exists');
-    }
-  } catch (e) {
-    print('⚠️ Failed to initialize driver queue: $e');
-  }
-
-  // Initialize system settings
-  try {
-    print('⚙️ Checking system settings...');
-    final settingsDoc = await firestore
-        .collection('system')
-        .doc('settings')
-        .get()
-        .timeout(Duration(seconds: 5));
-    
-    if (!settingsDoc.exists) {
-      await firestore.collection('system').doc('settings').set({
-        'baseFare': 15.0,
-        'farePerKm': 8.0,
-        'minimumFare': 15.0,
-        'maxWaitTime': 300, // 5 minutes
-        'driverTrackingInterval': 10, // seconds
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      print('✅ System settings initialized');
-    } else {
-      print('✅ System settings already exist');
-    }
-  } catch (e) {
-    print('⚠️ Failed to initialize system settings: $e');
+    print('⚠️ Background services initialization failed: $e');
   }
 }
 
@@ -242,22 +203,26 @@ class PasakayApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthService()),
         ChangeNotifierProvider(create: (_) => FirestoreService()),
         ChangeNotifierProvider(create: (_) => LocationService()),
+        Provider(create: (_) => ConnectivityService()),
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
-        title: 'yourapp - Booking Made Easy',
-        debugShowCheckedModeBanner: false, // Remove debug banner
-        theme: AppTheme.lightTheme, // Enhanced accessibility theme
+        title: 'Pasakay - Booking Made Easy',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
         home: const SplashScreen(),
         routes: {
           '/login': (context) => const LoginScreen(),
           '/register': (context) => const RoleSelectionScreen(),
-          '/register/passenger': (context) => const PassengerRegisterScreen(),
-          '/register/driver': (context) => const DriverRegisterScreen(),
+          '/register/passenger': (context) => const PassengerRegisterScreenWithVerification(),
+          '/register/driver': (context) => const DriverRegisterScreenWithVerification(),
           '/passenger': (context) => const PassengerDashboard(),
           '/driver': (context) => const DriverDashboard(),
           '/driver-registration': (context) => const DriverRegistrationScreen(),
-          '/admin': (context) => const AdminDashboard(),
+          '/admin': (context) => ProtectedRoute(
+            requiredRole: UserRole.admin,
+            child: const AdminDashboard(),
+          ),
         },
       ),
     );

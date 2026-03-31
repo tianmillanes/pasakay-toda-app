@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'passenger_register_screen.dart';
-import 'driver_register_screen.dart';
+import 'passenger_register_screen_with_verification.dart';
+import 'driver_register_screen_with_verification.dart';
+import '../../utils/app_theme.dart';
+import '../../widgets/tricycle_logo.dart';
 
 class RoleSelectionScreen extends StatelessWidget {
   const RoleSelectionScreen({super.key});
@@ -10,144 +12,103 @@ class RoleSelectionScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 40.0),
-          child: Column(
-            children: [
-              // Header
-              Column(
-                children: [
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF2D2D2D),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Image.asset(
-                            'assets/icon/icon.png',
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
-                                Icons.motorcycle,
-                                size: 40,
-                                color: Colors.blue,
-                              );
-                            },
-                          ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 60),
+                
+                // Header section
+                Center(
+                  child: Column(
+                    children: [
+                      const TricycleLogo(size: 150, showText: false, showShadow: false, plain: true),
+                      const SizedBox(height: 32),
+                      const Text(
+                        'Join Pasakay',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF1A1A1A),
+                          letterSpacing: -1,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Choose your perspective and\nstart your journey today',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w500,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Welcome to Pasakay',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF2D2D2D),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Choose how you\'d like to get started',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Color(0xFF757575),
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                ],
-              ),
+                ),
 
-              const SizedBox(height: 60),
+                const SizedBox(height: 56),
 
-              // Role options
-              Expanded(
-                child: Column(
+                // Options
+                _RoleOptionCard(
+                  title: 'Book a Ride',
+                  subtitle: 'Fast and reliable tricycle rides',
+                  icon: Icons.person_rounded,
+                  color: AppTheme.primaryGreen,
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const PassengerRegisterScreenWithVerification(),
+                      ),
+                    );
+                  },
+                ),
+
+                const SizedBox(height: 20),
+
+                _RoleOptionCard(
+                  title: 'Drive & Earn',
+                  subtitle: 'Set your schedule and earn daily',
+                  icon: Icons.local_taxi_rounded,
+                  color: const Color(0xFF1A1A1A),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const DriverRegisterScreenWithVerification(),
+                      ),
+                    );
+                  },
+                ),
+
+                const SizedBox(height: 64),
+
+                // Footer
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Passenger option
-                    _RoleCard(
-                      title: 'Book a Ride',
-                      subtitle: 'I need transportation',
-                      icon: Icons.person_outline,
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF2D2D2D), Color(0xFF2D2D2D)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const PassengerRegisterScreen(),
-                          ),
-                        );
-                      },
+                    Text(
+                      'Ready to commute? ',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                     ),
-
-                    const SizedBox(height: 16),
-
-                    // Driver option
-                    _RoleCard(
-                      title: 'Drive & Earn',
-                      subtitle: 'I want to provide rides',
-                      icon: Icons.motorcycle,
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF2D2D2D), Color(0xFF2D2D2D)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text(
+                        'Sign In',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.primaryGreen,
+                          fontSize: 15,
+                        ),
                       ),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const DriverRegisterScreen(),
-                          ),
-                        );
-                      },
                     ),
                   ],
                 ),
-              ),
-
-              const Spacer(),
-
-              // Login link
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text(
-                    'Already have an account? ',
-                    style: TextStyle(color: Color(0xFF757575), fontSize: 14),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(context).pushReplacementNamed('/login');
-                    },
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                    child: const Text(
-                      'Sign In',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF2D2D2D),
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
         ),
       ),
@@ -155,60 +116,65 @@ class RoleSelectionScreen extends StatelessWidget {
   }
 }
 
-class _RoleCard extends StatelessWidget {
+class _RoleOptionCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final IconData icon;
-  final Gradient gradient;
-  final VoidCallback onTap;
+  final Color color;
+  final VoidCallback onPressed;
 
-  const _RoleCard({
+  const _RoleOptionCard({
     required this.title,
     required this.subtitle,
     required this.icon,
-    required this.gradient,
-    required this.onTap,
+    required this.color,
+    required this.onPressed,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      height: 120,
       decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.shade100, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(24),
           child: Padding(
-            padding: const EdgeInsets.all(24.0),
+            padding: const EdgeInsets.all(24),
             child: Row(
               children: [
                 Container(
                   width: 60,
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(16),
+                    color: color.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(18),
                   ),
-                  child: Icon(icon, size: 32, color: Colors.white),
+                  child: Icon(icon, size: 28, color: color),
                 ),
                 const SizedBox(width: 20),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         title,
                         style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF1A1A1A),
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -216,17 +182,17 @@ class _RoleCard extends StatelessWidget {
                         subtitle,
                         style: TextStyle(
                           fontSize: 14,
-                          color: Colors.white.withOpacity(0.9),
-                          fontWeight: FontWeight.w400,
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
                   ),
                 ),
                 Icon(
-                  Icons.arrow_forward_ios,
-                  color: Colors.white.withOpacity(0.8),
-                  size: 20,
+                  Icons.arrow_forward_ios_rounded,
+                  color: Colors.grey.shade300,
+                  size: 16,
                 ),
               ],
             ),

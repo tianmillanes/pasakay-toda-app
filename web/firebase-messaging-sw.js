@@ -7,12 +7,12 @@ importScripts('https://www.gstatic.com/firebasejs/9.15.0/firebase-messaging-comp
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBTC5aLlbLs99h8q4rP8mGBDWEvpLBlpVg",
-  authDomain: "pasakay-toda-dispatch.firebaseapp.com",
-  projectId: "pasakay-toda-dispatch",
-  storageBucket: "pasakay-toda-dispatch.firebasestorage.app",
+  apiKey: "AIzaSyDOzDMlN_98Q8m7nQW_pj8E2WHbvH3yxgQ",
+  authDomain: "pasakay-toda-.firebaseapp.com",
+  projectId: "pasakay-toda",
+  storageBucket: "pasakay-toda.firebasestorage.app",
   messagingSenderId: "563584335869",
-  appId: "1:563584335869:web:2f843d05183a0b7ec81fa3",
+  appId: "1:972163622806:android:3a5d351ddc5de1f87cdfb7",
   measurementId: "G-CTJRVR4DVC"
 };
 

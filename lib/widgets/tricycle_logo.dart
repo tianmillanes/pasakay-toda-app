@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/app_theme.dart';
 
 /// Custom painter for authentic tricycle design
 class TricyclePainter extends CustomPainter {
@@ -109,6 +110,7 @@ class TricycleLogo extends StatelessWidget {
   final bool showText;
   final bool showShadow;
   final Color? backgroundColor;
+  final bool plain;
 
   const TricycleLogo({
     super.key,
@@ -116,10 +118,29 @@ class TricycleLogo extends StatelessWidget {
     this.showText = true,
     this.showShadow = true,
     this.backgroundColor,
+    this.plain = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (plain) {
+      return SizedBox(
+        width: size,
+        height: size,
+        child: Image.asset(
+          'trike_logo.png',
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            return Center(
+              child: CustomPaint(
+                size: Size(size * 0.68, size * 0.48),
+                painter: TricyclePainter(),
+              ),
+            );
+          },
+        ),
+      );
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -130,58 +151,45 @@ class TricycleLogo extends StatelessWidget {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: backgroundColor != null
-                  ? [backgroundColor!, backgroundColor!.withOpacity(0.8)]
-                  : [const Color(0xFF2D2D2D), const Color(0xFF2D2D2D)],
+                  ? [backgroundColor!, backgroundColor!.withOpacity(0.85)]
+                  : [AppTheme.primaryGreen, AppTheme.primaryGreen.withOpacity(0.85)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(size / 2),
+            shape: BoxShape.circle,
             boxShadow: showShadow
                 ? [
                     BoxShadow(
-                      color: (backgroundColor ?? const Color(0xFF2D2D2D)).withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
+                      color: (backgroundColor ?? AppTheme.primaryGreen).withOpacity(0.35),
+                      blurRadius: 32,
+                      offset: const Offset(0, 18),
                     ),
                   ]
                 : null,
           ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Circular white background for logo
-              Container(
-                width: size * 0.75,
-                height: size * 0.75,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
+          child: Center(
+            child: Container(
+              width: size * 0.82,
+              height: size * 0.82,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
               ),
-              // Use actual logo image
-              ClipOval(
-                child: Container(
-                  width: size * 0.75,
-                  height: size * 0.75,
-                  color: Colors.white,
-                  child: Image.asset(
-                    'logo.png',
-                    width: size * 0.6,
-                    height: size * 0.6,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      // Fallback to custom painted logo if image fails
-                      return Center(
-                        child: CustomPaint(
-                          size: Size(size * 0.5, size * 0.35),
-                          painter: TricyclePainter(),
-                        ),
-                      );
-                    },
-                  ),
-                ),
+              padding: EdgeInsets.all(size * 0.015),
+              child: Image.asset(
+                'trike_logo.png',
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  // Fallback to custom painted logo if image fails
+                  return Center(
+                    child: CustomPaint(
+                      size: Size(size * 0.68, size * 0.48),
+                      painter: TricyclePainter(),
+                    ),
+                  );
+                },
               ),
-            ],
+            ),
           ),
         ),
 
@@ -191,10 +199,10 @@ class TricycleLogo extends StatelessWidget {
             shaderCallback: (bounds) => LinearGradient(
               colors: backgroundColor != null
                   ? [backgroundColor!, backgroundColor!.withOpacity(0.8)]
-                  : [const Color(0xFF2D2D2D), const Color(0xFF2D2D2D)],
+                  : [AppTheme.primaryGreen, AppTheme.primaryGreen.withOpacity(0.8)],
             ).createShader(bounds),
             child: Text(
-              'yourapp',
+              'Pasakay',
               style: TextStyle(
                 fontSize: size * 0.27,
                 fontWeight: FontWeight.bold,
@@ -228,55 +236,44 @@ class CompactTricycleLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final logoColor = color ?? const Color(0xFF2D2D2D);
+    final logoColor = color ?? AppTheme.primaryGreen;
 
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [logoColor, logoColor.withOpacity(0.8)],
+          colors: [
+            logoColor,
+            logoColor.withOpacity(0.85),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(size / 2),
+        shape: BoxShape.circle,
       ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Circular white background for compact logo
-          Container(
-            width: size * 0.75,
-            height: size * 0.75,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-            ),
+      child: Center(
+        child: Container(
+          width: size * 0.82,
+          height: size * 0.82,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
           ),
-          // Use actual logo image
-          ClipOval(
-            child: Container(
-              width: size * 0.75,
-              height: size * 0.75,
-              color: Colors.white,
-              child: Image.asset(
-                'logo.png',
-                width: size * 0.6,
-                height: size * 0.6,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) {
-                  // Fallback to custom painted logo if image fails
-                  return Center(
-                    child: CustomPaint(
-                      size: Size(size * 0.5, size * 0.35),
-                      painter: TricyclePainter(),
-                    ),
-                  );
-                },
-              ),
-            ),
+          padding: EdgeInsets.all(size * 0.015),
+          child: Image.asset(
+            'trike_logo.png',
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return Center(
+                child: CustomPaint(
+                  size: Size(size * 0.6, size * 0.42),
+                  painter: TricyclePainter(),
+                ),
+              );
+            },
           ),
-        ],
+        ),
       ),
     );
   }

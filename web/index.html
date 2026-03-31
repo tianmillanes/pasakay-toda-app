@@ -30,8 +30,11 @@
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>YourApp</title>
-  <link rel="manifest" href="manifest.json">
   
+  <!-- Add your Web Client ID here! Find this in Firebase Console -> Authentication -> Sign-in methods -> Google -> Web SDK configuration -->
+  <meta name="google-signin-client_id" content="503527035016-42pvm0glari1srgepe42ocr6cjd7tkmh.apps.googleusercontent.com">
+  
+  <link rel="manifest" href="manifest.json">
   <style>
     /* Hide Flutter web debug overlays */
     .flutter-debug-overlay,
@@ -84,10 +87,21 @@
   </script>
 </head>
 <body>
+  <!-- reCAPTCHA container for Firebase Auth -->
+  <div id="recaptcha-container" style="display: none;"></div>
+  
+  <!-- Alternative reCAPTCHA containers that Firebase might look for -->
+  <div id="recaptcha" style="display: none;"></div>
+  <div id="firebase-recaptcha" style="display: none;"></div>
   <!-- Google Maps JavaScript API -->
   <script async defer
     src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDhsS5TahdyUKJl61qR1swg9vLpFNL3U1Q&libraries=places">
   </script>
+  
+  <!-- reCAPTCHA for Firebase Auth -->
+  <script src="https://www.gstatic.com/firebasejs/ui/6.0.1/firebase-ui-auth.js"></script>
+  <link type="text/css" rel="stylesheet" href="https://www.gstatic.com/firebasejs/ui/6.0.1/firebase-ui-auth.css" />
+  
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

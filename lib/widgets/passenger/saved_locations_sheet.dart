@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:provider/provider.dart';
+import '../../models/lat_lng.dart';
 import '../../utils/app_theme.dart';
 import '../../services/location_storage_service.dart';
+import '../../services/location_service.dart';
 import '../../services/address_search_service.dart';
 import '../usability_helpers.dart';
 
@@ -356,7 +358,19 @@ class _SavedLocationsSheetState extends State<SavedLocationsSheet> {
                 
                 // Get coordinates if not already set
                 if (selectedCoordinates == null) {
-                  selectedCoordinates = await AddressSearchService.getCoordinatesFromAddress(addressController.text);
+                  LatLng? proximity;
+                  try {
+                    final locationService = Provider.of<LocationService>(context, listen: false);
+                    final position = locationService.currentPosition ?? await locationService.getCurrentLocation();
+                    if (position != null) {
+                      proximity = LatLng(position.latitude, position.longitude);
+                    }
+                  } catch (_) {}
+
+                  selectedCoordinates = await AddressSearchService.getCoordinatesFromAddress(
+                    addressController.text,
+                    proximity: proximity,
+                  );
                 }
                 
                 if (selectedCoordinates == null) {
@@ -433,7 +447,19 @@ class _SavedLocationsSheetState extends State<SavedLocationsSheet> {
     if (query.isEmpty) return;
     
     try {
-      final results = await AddressSearchService.searchAddresses(query);
+      // Get current location for proximity search
+      LatLng? proximity;
+      try {
+        final locationService = Provider.of<LocationService>(context, listen: false);
+        final position = locationService.currentPosition ?? await locationService.getCurrentLocation();
+        if (position != null) {
+          proximity = LatLng(position.latitude, position.longitude);
+        }
+      } catch (_) {
+        // Continue without proximity if location fails
+      }
+
+      final results = await AddressSearchService.searchAddresses(query, proximity: proximity);
       if (results.isNotEmpty) {
         // Show search results
         showDialog(
