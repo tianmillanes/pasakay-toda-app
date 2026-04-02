@@ -21,20 +21,18 @@ class IdVerificationService {
     final idBase64 = base64Encode(compressedIdBytes);
     final selfieBase64 = base64Encode(compressedSelfieBytes);
 
-    // Save heavy images in a separate collection so we don't bloat the main user profile
-    await _firestore.collection('user_verifications').doc(userId).set({
-      'idBase64': idBase64,
-      'selfieBase64': selfieBase64,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    // Convert to Data URI format (consistent with drivers' system)
+    final idDataUri = 'data:image/jpeg;base64,$idBase64';
+    final selfieDataUri = 'data:image/jpeg;base64,$selfieBase64';
 
-    // Update user document in Firestore with lightweight status
+    // Store directly in the user document (matching driver behavior)
+    // This ensures photos don't "vanish" and are always available
     await _firestore.collection('users').doc(userId).update({
       'idType': idType,
       'idVerificationStatus': 'pending',
       'idVerificationSubmittedAt': FieldValue.serverTimestamp(),
-      'idImageUrl': '', // cleared as we no longer use Storage URLs
-      'selfieUrl': '',  // cleared
+      'idImageUrl': idDataUri,
+      'selfieUrl': selfieDataUri,
     });
 
     // Create admin notification
@@ -60,10 +58,8 @@ class IdVerificationService {
       'idVerificationReviewedBy': adminId,
     });
 
-    // We can confidently delete the heavy verification doc to save free database space!
-    try {
-      await _firestore.collection('user_verifications').doc(userId).delete();
-    } catch (_) {}
+    // We NO LONGER delete the photos. They stay in the user profile permanently 
+    // for future reference, just like driver licenses.
 
     // Notify passenger
     await _firestore.collection('notifications').add({
@@ -90,10 +86,8 @@ class IdVerificationService {
       'idVerificationReviewedBy': adminId,
     });
 
-    // Delete verification doc so they can upload fresh ones later
-    try {
-      await _firestore.collection('user_verifications').doc(userId).delete();
-    } catch (_) {}
+    // We NO LONGER delete the photos. This allows them to see why they were
+    // rejected and re-submit if needed.
 
     // Notify passenger
     await _firestore.collection('notifications').add({

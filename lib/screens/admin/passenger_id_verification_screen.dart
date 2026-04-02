@@ -396,17 +396,25 @@ class _PhotoTile extends StatelessWidget {
                 : (imageUrl != null && imageUrl!.isNotEmpty)
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(11),
-                    child: Image.network(
-                      imageUrl!,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return const Center(child: CircularProgressIndicator());
-                      },
-                      errorBuilder: (_, __, ___) => Center(
-                        child: Icon(icon, color: Colors.grey.shade300, size: 36),
-                      ),
-                    ),
+                    child: imageUrl!.startsWith('data:image')
+                        ? Image.memory(
+                            base64Decode(imageUrl!.split(',').last),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Center(
+                              child: Icon(icon, color: Colors.grey.shade300, size: 36),
+                            ),
+                          )
+                        : Image.network(
+                            imageUrl!,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, progress) {
+                              if (progress == null) return child;
+                              return const Center(child: CircularProgressIndicator());
+                            },
+                            errorBuilder: (_, __, ___) => Center(
+                              child: Icon(icon, color: Colors.grey.shade300, size: 36),
+                            ),
+                          ),
                   )
                 : Center(
                     child: Icon(icon, color: Colors.grey.shade300, size: 36),
@@ -443,7 +451,9 @@ class _PhotoTile extends StatelessWidget {
               borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
               child: (base64Str != null && base64Str.isNotEmpty)
                   ? Image.memory(base64Decode(base64Str), fit: BoxFit.contain)
-                  : Image.network(url ?? '', fit: BoxFit.contain),
+                  : (url != null && url.startsWith('data:image'))
+                      ? Image.memory(base64Decode(url.split(',').last), fit: BoxFit.contain)
+                      : Image.network(url ?? '', fit: BoxFit.contain),
             ),
           ],
         ),
