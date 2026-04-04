@@ -106,6 +106,12 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
     final minimumFare = (fareData['minimumFare'] ?? 20.0).toDouble();
     final surgeMultiplier = (fareData['surgeMultiplier'] ?? 1.0).toDouble();
 
+    final pbBaseFare = (fareData['pasabuyBaseFare'] ?? 30.0).toDouble();
+    final pbFirstTwoKmFare = (fareData['pasabuyFirstTwoKmFare'] ?? 30.0).toDouble();
+    final pbFarePer500m = (fareData['pasabuyFarePer500m'] ?? 10.0).toDouble();
+    final pbMinimumFare = (fareData['pasabuyMinimumFare'] ?? 30.0).toDouble();
+    final pbSurgeMultiplier = (fareData['pasabuySurgeMultiplier'] ?? 1.0).toDouble();
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -142,31 +148,63 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
         ),
         content: Container(
           margin: const EdgeInsets.only(top: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppTheme.backgroundLight,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _fareAdvisoryRow('Base Fare', '₱${baseFare.toStringAsFixed(2)}'),
-              const Divider(height: 16, color: AppTheme.borderLight),
-              _fareAdvisoryRow(
-                  'First 2km', '₱${firstTwoKmFare.toStringAsFixed(2)}'),
-              const Divider(height: 16, color: AppTheme.borderLight),
-              _fareAdvisoryRow(
-                  'Per 500m (after 2km)', '₱${farePer500m.toStringAsFixed(2)}'),
-              const Divider(height: 16, color: AppTheme.borderLight),
-              _fareAdvisoryRow(
-                  'Minimum Fare', '₱${minimumFare.toStringAsFixed(2)}'),
-              if (surgeMultiplier > 1.0) ...[
-                const Divider(height: 16, color: AppTheme.borderLight),
-                _fareAdvisoryRow('⚡ Surge Multiplier',
-                    '${surgeMultiplier.toStringAsFixed(1)}x',
-                    highlight: true),
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Ride Service', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryGreen)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.backgroundLight,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      _fareAdvisoryRow('Base Fare', '₱${baseFare.toStringAsFixed(2)}'),
+                      const Divider(height: 12, color: AppTheme.borderLight),
+                      _fareAdvisoryRow('First 2km', '₱${firstTwoKmFare.toStringAsFixed(2)}'),
+                      const Divider(height: 12, color: AppTheme.borderLight),
+                      _fareAdvisoryRow('Per 500m (after 2km)', '₱${farePer500m.toStringAsFixed(2)}'),
+                      const Divider(height: 12, color: AppTheme.borderLight),
+                      _fareAdvisoryRow('Minimum Fare', '₱${minimumFare.toStringAsFixed(2)}'),
+                      if (surgeMultiplier > 1.0) ...[
+                        const Divider(height: 12, color: AppTheme.borderLight),
+                        _fareAdvisoryRow('⚡ Surge', '${surgeMultiplier.toStringAsFixed(1)}x', highlight: true),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('PasaBuy Service', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      _fareAdvisoryRow('Base Fare', '₱${pbBaseFare.toStringAsFixed(2)}'),
+                      const Divider(height: 12, color: Colors.white),
+                      _fareAdvisoryRow('First 2km', '₱${pbFirstTwoKmFare.toStringAsFixed(2)}'),
+                      const Divider(height: 12, color: Colors.white),
+                      _fareAdvisoryRow('Per 500m (after 2km)', '₱${pbFarePer500m.toStringAsFixed(2)}'),
+                      const Divider(height: 12, color: Colors.white),
+                      _fareAdvisoryRow('Minimum Fare', '₱${pbMinimumFare.toStringAsFixed(2)}'),
+                      if (pbSurgeMultiplier > 1.0) ...[
+                        const Divider(height: 12, color: Colors.white),
+                        _fareAdvisoryRow('⚡ Surge', '${pbSurgeMultiplier.toStringAsFixed(1)}x', highlight: true),
+                      ],
+                    ],
+                  ),
+                ),
               ],
-            ],
+            ),
           ),
         ),
         actions: [
@@ -990,7 +1028,7 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
             pickupAddress: _activePasaBuy!.pickupAddress,
             dropoffAddress: _activePasaBuy!.dropoffAddress,
             status: _mapPasaBuyStatusToRideStatus(status),
-            fare: _activePasaBuy!.budget,
+            fare: _activePasaBuy!.fare,
             estimatedDuration: 0,
             requestedAt: _activePasaBuy!.createdAt,
             driverId: _activePasaBuy!.driverId,

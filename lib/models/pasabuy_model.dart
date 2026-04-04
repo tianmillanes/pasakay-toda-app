@@ -20,7 +20,7 @@ class PasaBuyModel {
   final GeoPoint dropoffLocation;
   final String dropoffAddress;
   final String itemDescription;
-  final double budget;
+  final double fare;
   final PasaBuyStatus status;
   final String? driverId;
   final String? driverName;
@@ -48,7 +48,7 @@ class PasaBuyModel {
     required this.dropoffLocation,
     required this.dropoffAddress,
     required this.itemDescription,
-    required this.budget,
+    required this.fare,
     required this.status,
     this.driverId,
     this.driverName,
@@ -80,7 +80,7 @@ class PasaBuyModel {
       dropoffLocation: data['dropoffLocation'] as GeoPoint,
       dropoffAddress: data['dropoffAddress'] ?? '',
       itemDescription: data['itemDescription'] ?? '',
-      budget: (data['budget'] as num).toDouble(),
+      fare: (data['fare'] ?? data['budget'] ?? 0.0).toDouble(),
       status: _parseStatus(data['status']),
       driverId: data['driverId'],
       driverName: data['driverName'],
@@ -129,7 +129,7 @@ class PasaBuyModel {
       'dropoffLocation': dropoffLocation,
       'dropoffAddress': dropoffAddress,
       'itemDescription': itemDescription,
-      'budget': budget,
+      'fare': fare,
       'status': status.toString().split('.').last,
       'driverId': driverId,
       'driverName': driverName,
@@ -164,7 +164,7 @@ class PasaBuyModel {
       dropoffLocation: dropoffLocation,
       dropoffAddress: dropoffAddress,
       itemDescription: itemDescription,
-      budget: budget,
+      fare: fare,
       status: status ?? this.status,
       driverId: driverId ?? this.driverId,
       driverName: driverName ?? this.driverName,

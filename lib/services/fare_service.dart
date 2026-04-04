@@ -13,6 +13,13 @@ class FareService {
   static double _minimumFare = 20.0; // Minimum fare in PHP
   static double _surgeMultiplier = 1.0;
 
+  // Pasabuy specific fare rules
+  static double _pasabuyBaseFare = 30.0;
+  static double _pasabuyFirstTwoKmFare = 30.0;
+  static double _pasabuyFarePer500m = 10.0;
+  static double _pasabuyMinimumFare = 30.0;
+  static double _pasabuySurgeMultiplier = 1.0;
+
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   static Stream<DocumentSnapshot<Map<String, dynamic>>> get fareRulesStream {
@@ -29,6 +36,13 @@ class FareService {
         _farePer500m = (data['farePer500m'] ?? 10.0).toDouble();
         _minimumFare = (data['minimumFare'] ?? 20.0).toDouble();
         _surgeMultiplier = (data['surgeMultiplier'] ?? 1.0).toDouble();
+
+        // Load Pasabuy rules
+        _pasabuyBaseFare = (data['pasabuyBaseFare'] ?? 30.0).toDouble();
+        _pasabuyFirstTwoKmFare = (data['pasabuyFirstTwoKmFare'] ?? 30.0).toDouble();
+        _pasabuyFarePer500m = (data['pasabuyFarePer500m'] ?? 10.0).toDouble();
+        _pasabuyMinimumFare = (data['pasabuyMinimumFare'] ?? 30.0).toDouble();
+        _pasabuySurgeMultiplier = (data['pasabuySurgeMultiplier'] ?? 1.0).toDouble();
       }
     } catch(e) {
       print('Failed to load fare rules, using defaults: $e');
@@ -59,6 +73,7 @@ class FareService {
     required double dropoffLng,
     double? driverLat,
     double? driverLng,
+    bool isPasabuy = false,
   }) async {
     try {
       // Load freshest fare rules from Admin DB before calculating
@@ -76,8 +91,10 @@ class FareService {
       int durationMinutes = (routeData['duration'] / 60)
           .round(); // Convert to minutes
 
-      // Calculate fare
-      double fare = _calculateFare(distanceKm);
+      // Calculate fare based on service type
+      double fare = isPasabuy 
+          ? _calculatePasabuyFare(distanceKm)
+          : _calculateFare(distanceKm);
 
       // Calculate ETA if driver location is provided
       int? etaMinutes;
@@ -107,6 +124,7 @@ class FareService {
         dropoffLng,
         driverLat,
         driverLng,
+        isPasabuy: isPasabuy,
       );
     }
   }
@@ -251,14 +269,31 @@ class FareService {
     return fare < _minimumFare ? _minimumFare : fare;
   }
 
+  static double _calculatePasabuyFare(double distanceKm) {
+    if (distanceKm <= 0) return _pasabuyMinimumFare * _pasabuySurgeMultiplier;
+    
+    double fare = _pasabuyFirstTwoKmFare;
+    
+    double distanceBeyond2km = distanceKm - 2.0;
+    if (distanceBeyond2km > 0) {
+      int increments = (distanceBeyond2km * 2).ceil();
+      fare += increments * _pasabuyFarePer500m;
+    }
+    
+    fare = fare * _pasabuySurgeMultiplier;
+    
+    return fare < _pasabuyMinimumFare ? _pasabuyMinimumFare : fare;
+  }
+
   static Map<String, dynamic> _calculateFallbackFareAndETA(
     double pickupLat,
     double pickupLng,
     double dropoffLat,
     double dropoffLng,
     double? driverLat,
-    double? driverLng,
-  ) {
+    double? driverLng, {
+    bool isPasabuy = false,
+  }) {
     // Calculate straight-line distance
     double distance = Geolocator.distanceBetween(
       pickupLat,
@@ -268,7 +303,9 @@ class FareService {
     );
 
     double distanceKm = distance / 1000;
-    double fare = _calculateFare(distanceKm);
+    double fare = isPasabuy 
+        ? _calculatePasabuyFare(distanceKm)
+        : _calculateFare(distanceKm);
 
     // Estimate duration (assume 1.5x straight-line distance for actual route)
     double adjustedDistanceKm = distanceKm * 1.5;
@@ -335,6 +372,12 @@ class FareService {
     double? farePer500m,
     double? minimumFare,
     double? surgeMultiplier,
+    // Pasabuy fields
+    double? pasabuyBaseFare,
+    double? pasabuyFirstTwoKmFare,
+    double? pasabuyFarePer500m,
+    double? pasabuyMinimumFare,
+    double? pasabuySurgeMultiplier,
   }) async {
     print('Updating fare rates to Firestore...');
     final data = {
@@ -343,6 +386,13 @@ class FareService {
       if (farePer500m != null) 'farePer500m': farePer500m,
       if (minimumFare != null) 'minimumFare': minimumFare,
       if (surgeMultiplier != null) 'surgeMultiplier': surgeMultiplier,
+      
+      if (pasabuyBaseFare != null) 'pasabuyBaseFare': pasabuyBaseFare,
+      if (pasabuyFirstTwoKmFare != null) 'pasabuyFirstTwoKmFare': pasabuyFirstTwoKmFare,
+      if (pasabuyFarePer500m != null) 'pasabuyFarePer500m': pasabuyFarePer500m,
+      if (pasabuyMinimumFare != null) 'pasabuyMinimumFare': pasabuyMinimumFare,
+      if (pasabuySurgeMultiplier != null) 'pasabuySurgeMultiplier': pasabuySurgeMultiplier,
+      
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedBy': adminId,
     };

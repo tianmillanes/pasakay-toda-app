@@ -1410,7 +1410,7 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
                       ],
                       _buildInfoChip(
                         Icons.account_balance_wallet_outlined,
-                        FareService.formatFare(request.budget),
+                        FareService.formatFare(request.fare),
                         Colors.green.shade50,
                         Colors.green.shade700,
                       ),

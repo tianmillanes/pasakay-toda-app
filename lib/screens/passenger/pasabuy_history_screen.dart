@@ -91,7 +91,7 @@ class PasaBuyHistoryScreen extends StatelessWidget {
             );
           }
 
-          double totalSpent = completedRequests.fold(0, (sum, req) => sum + req.budget);
+          double totalSpent = completedRequests.fold(0, (sum, req) => sum + req.fare);
           int totalRequests = completedRequests.length;
 
           return CustomScrollView(
@@ -248,7 +248,7 @@ class _PasaBuyHistoryCard extends StatelessWidget {
                   ],
                 ),
                 Text(
-                  FareService.formatFare(request.budget),
+                  FareService.formatFare(request.fare),
                   style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Color(0xFFFF9800)),
                 ),
               ],

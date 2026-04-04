@@ -154,7 +154,7 @@ class _PasaBuyStatsSection extends StatelessWidget {
 
         final requests = snapshot.data ?? [];
         final completedRequests = requests.where((r) => r.status == PasaBuyStatus.completed).toList();
-        final totalSpent = completedRequests.fold<double>(0, (sum, req) => sum + req.budget);
+        final totalSpent = completedRequests.fold<double>(0, (sum, req) => sum + req.fare);
         final thisMonthRequests = completedRequests.where((r) {
           final now = DateTime.now();
           return r.completedAt != null &&

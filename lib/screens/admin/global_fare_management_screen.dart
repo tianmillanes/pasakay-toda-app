@@ -26,12 +26,12 @@ class GlobalFareManagementScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Global Fare Settings', 
+              'Ride Fare Settings', 
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: -0.5)
             ),
             const SizedBox(height: 8),
             const Text(
-              'Changes made here will instantly affect all active passengers and drivers.',
+              'Changes made here will instantly affect all active passengers and drivers for ride requests.',
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
             ),
             const SizedBox(height: 20),
@@ -51,64 +51,149 @@ class GlobalFareManagementScreen extends StatelessWidget {
                 
                 // We map data even if it doesn't exist locally yet
                 final data = snapshot.data?.data() ?? {};
+                
+                // Ride Fare Data
                 final baseFare = (data['baseFare'] ?? 20.0).toDouble();
                 final firstTwoKmFare = (data['firstTwoKmFare'] ?? 20.0).toDouble();
                 final farePer500m = (data['farePer500m'] ?? 10.0).toDouble();
                 final minimumFare = (data['minimumFare'] ?? 20.0).toDouble();
                 final surgeMultiplier = (data['surgeMultiplier'] ?? 1.0).toDouble();
+
+                // Pasabuy Fare Data
+                final pasabuyBaseFare = (data['pasabuyBaseFare'] ?? 30.0).toDouble();
+                final pasabuyFirstTwoKmFare = (data['pasabuyFirstTwoKmFare'] ?? 30.0).toDouble();
+                final pasabuyFarePer500m = (data['pasabuyFarePer500m'] ?? 10.0).toDouble();
+                final pasabuyMinimumFare = (data['pasabuyMinimumFare'] ?? 30.0).toDouble();
+                final pasabuySurgeMultiplier = (data['pasabuySurgeMultiplier'] ?? 1.0).toDouble();
                 
-                return Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: AppTheme.borderLight),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.02), 
-                        blurRadius: 10, 
-                        offset: const Offset(0, 4)
-                      )
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      _buildFareRow('Base Fare', '₱$baseFare'),
-                      const Divider(height: 24, color: AppTheme.borderLight),
-                      _buildFareRow('First 2km Rate', '₱$firstTwoKmFare'),
-                      const Divider(height: 24, color: AppTheme.borderLight),
-                      _buildFareRow('Per 500m (After 2km)', '₱$farePer500m'),
-                      const Divider(height: 24, color: AppTheme.borderLight),
-                      _buildFareRow('Minimum Fare', '₱$minimumFare'),
-                      const Divider(height: 24, color: AppTheme.borderLight),
-                      _buildFareRow('Surge Multiplier', '${surgeMultiplier}x'),
-                      
-                      const SizedBox(height: 32),
-                      
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.edit, size: 18),
-                          label: const Text('Edit Fare Rules', style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppTheme.primaryGreen,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            elevation: 0,
-                          ),
-                          onPressed: () => _showEditDialog(
-                            context, 
-                            baseFare, 
-                            firstTwoKmFare, 
-                            farePer500m, 
-                            minimumFare, 
-                            surgeMultiplier
-                          ),
-                        ),
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Ride Fare Card
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: AppTheme.borderLight),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.02), 
+                            blurRadius: 10, 
+                            offset: const Offset(0, 4)
+                          )
+                        ],
                       ),
-                    ],
-                  ),
+                      child: Column(
+                        children: [
+                          _buildFareRow('Base Fare', '₱$baseFare'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('First 2km Rate', '₱$firstTwoKmFare'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('Per 500m (After 2km)', '₱$farePer500m'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('Minimum Fare', '₱$minimumFare'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('Surge Multiplier', '${surgeMultiplier}x'),
+                          
+                          const SizedBox(height: 32),
+                          
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.edit, size: 18),
+                              label: const Text('Edit Ride Fare', style: TextStyle(fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppTheme.primaryGreen,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                elevation: 0,
+                              ),
+                              onPressed: () => _showEditDialog(
+                                context, 
+                                isPasabuy: false,
+                                bF: baseFare, 
+                                fTKF: firstTwoKmFare, 
+                                fP5: farePer500m, 
+                                mF: minimumFare, 
+                                sM: surgeMultiplier
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 40),
+
+                    const Text(
+                      'Pasabuy Fare Settings', 
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: -0.5)
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Changes made here will instantly affect all active passengers and drivers for Pasabuy requests.',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Pasabuy Fare Card
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: AppTheme.borderLight),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.02), 
+                            blurRadius: 10, 
+                            offset: const Offset(0, 4)
+                          )
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          _buildFareRow('Base Fare', '₱$pasabuyBaseFare'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('First 2km Rate', '₱$pasabuyFirstTwoKmFare'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('Per 500m (After 2km)', '₱$pasabuyFarePer500m'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('Minimum Fare', '₱$pasabuyMinimumFare'),
+                          const Divider(height: 24, color: AppTheme.borderLight),
+                          _buildFareRow('Surge Multiplier', '${pasabuySurgeMultiplier}x'),
+                          
+                          const SizedBox(height: 32),
+                          
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.edit, size: 18),
+                              label: const Text('Edit Pasabuy Fare', style: TextStyle(fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orange,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                elevation: 0,
+                              ),
+                              onPressed: () => _showEditDialog(
+                                context, 
+                                isPasabuy: true,
+                                bF: pasabuyBaseFare, 
+                                fTKF: pasabuyFirstTwoKmFare, 
+                                fP5: pasabuyFarePer500m, 
+                                mF: pasabuyMinimumFare, 
+                                sM: pasabuySurgeMultiplier
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -134,7 +219,7 @@ class GlobalFareManagementScreen extends StatelessWidget {
     );
   }
 
-  void _showEditDialog(BuildContext context, double bF, double fTKF, double fP5, double mF, double sM) {
+  void _showEditDialog(BuildContext context, {required bool isPasabuy, required double bF, required double fTKF, required double fP5, required double mF, required double sM}) {
     final bFCtrl = TextEditingController(text: bF.toString());
     final fTKFCtrl = TextEditingController(text: fTKF.toString());
     final fP5Ctrl = TextEditingController(text: fP5.toString());
@@ -145,7 +230,7 @@ class GlobalFareManagementScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Update Fare Rules', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)),
+        title: Text(isPasabuy ? 'Update Pasabuy Fare' : 'Update Ride Fare', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -172,24 +257,35 @@ class GlobalFareManagementScreen extends StatelessWidget {
             onPressed: () async {
               try {
                 final authService = Provider.of<AuthService>(context, listen: false);
-                await FareService.updateFareRates(
-                  adminId: authService.currentUser!.uid,
-                  baseFare: double.parse(bFCtrl.text),
-                  firstTwoKmFare: double.parse(fTKFCtrl.text),
-                  farePer500m: double.parse(fP5Ctrl.text),
-                  minimumFare: double.parse(mFCtrl.text),
-                  surgeMultiplier: double.parse(sMCtrl.text),
-                );
+                if (isPasabuy) {
+                  await FareService.updateFareRates(
+                    adminId: authService.currentUser!.uid,
+                    pasabuyBaseFare: double.parse(bFCtrl.text),
+                    pasabuyFirstTwoKmFare: double.parse(fTKFCtrl.text),
+                    pasabuyFarePer500m: double.parse(fP5Ctrl.text),
+                    pasabuyMinimumFare: double.parse(mFCtrl.text),
+                    pasabuySurgeMultiplier: double.parse(sMCtrl.text),
+                  );
+                } else {
+                  await FareService.updateFareRates(
+                    adminId: authService.currentUser!.uid,
+                    baseFare: double.parse(bFCtrl.text),
+                    firstTwoKmFare: double.parse(fTKFCtrl.text),
+                    farePer500m: double.parse(fP5Ctrl.text),
+                    minimumFare: double.parse(mFCtrl.text),
+                    surgeMultiplier: double.parse(sMCtrl.text),
+                  );
+                }
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
-                  SnackbarHelper.showSuccess(context, 'Fare rules updated successfully!');
+                  SnackbarHelper.showSuccess(context, '${isPasabuy ? 'Pasabuy' : 'Ride'} fare rules updated successfully!');
                 }
               } catch (e) {
                 if (ctx.mounted) SnackbarHelper.showError(ctx, 'Invalid values entered.');
               }
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryGreen, 
+              backgroundColor: isPasabuy ? Colors.orange : AppTheme.primaryGreen, 
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
             ),

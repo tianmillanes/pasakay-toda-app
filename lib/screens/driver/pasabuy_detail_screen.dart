@@ -418,7 +418,7 @@ class _PasaBuyDetailScreenState extends State<PasaBuyDetailScreen> {
               children: [
                 Text(_getStatusText().toUpperCase(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: _getStatusColor(), letterSpacing: 1.5)),
                 const SizedBox(height: 4),
-                Text('Budget: ${FareService.formatFare(_currentRequest.budget)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
+                Text('Fare: ${FareService.formatFare(_currentRequest.fare)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
               ],
             ),
           ),

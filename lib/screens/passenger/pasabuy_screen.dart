@@ -8,6 +8,7 @@ import '../../services/location_service.dart';
 import '../../services/firestore_service.dart';
 import '../../services/auth_service.dart';
 import '../../models/pasabuy_model.dart';
+import '../../services/fare_service.dart';
 import '../../widgets/usability_helpers.dart';
 import '../../utils/app_theme.dart';
 import 'map_picker_screen.dart';
@@ -27,14 +28,17 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
   String _pickupAddress = '';
   String _dropoffAddress = '';
   String _itemDescription = '';
-  String _budget = '';
-  bool _sameLocation = false;
+  double? _fare;
+  double? _distance;
+  int? _duration;
   bool _isSubmitting = false;
+  bool _isLoadingFare = false;
   bool _useCurrentLocation = true; // Toggle: true = current GPS, false = pickup location
+  bool _sameLocation = false; // Toggle: return to same location
+
   // final Set<Marker> _markers = {}; // No longer used for UI display
 
   final _itemController = TextEditingController();
-  final _budgetController = TextEditingController();
   final _pickupController = TextEditingController();
   final _dropoffController = TextEditingController();
   
@@ -47,10 +51,37 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
   @override
   void dispose() {
     _itemController.dispose();
-    _budgetController.dispose();
     _pickupController.dispose();
     _dropoffController.dispose();
     super.dispose();
+  }
+
+  Future<void> _calculateFareAndETA() async {
+    final finalDropoff = _sameLocation ? _pickupLocation : _dropoffLocation;
+    if (_pickupLocation == null || finalDropoff == null) return;
+    
+    setState(() => _isLoadingFare = true);
+    try {
+      final result = await FareService.calculateFareAndETA(
+        pickupLat: _pickupLocation!.latitude,
+        pickupLng: _pickupLocation!.longitude,
+        dropoffLat: finalDropoff.latitude,
+        dropoffLng: finalDropoff.longitude,
+        isPasabuy: true,
+      );
+      
+      setState(() {
+        _fare = result['fare'] as double;
+        _duration = result['duration'] as int;
+        _distance = result['distance'] as double;
+        _isLoadingFare = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingFare = false);
+        SnackbarHelper.showError(context, 'Error calculating fare: $e');
+      }
+    }
   }
 
   Future<void> _getCurrentLocation() async {
@@ -74,6 +105,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
           _pickupAddress = address;
           _pickupController.text = address;
         });
+        _calculateFareAndETA();
       }
     } on LocationServiceException catch (_) {
       if (mounted) {
@@ -114,6 +146,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
           _dropoffLocation = location;
         }
       });
+      _calculateFareAndETA();
     }
   }
 
@@ -129,14 +162,8 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
       return;
     }
 
-    if (_budget.trim().isEmpty) {
-      SnackbarHelper.showError(context, 'Please enter budget');
-      return;
-    }
-
-    double? budgetAmount = double.tryParse(_budget);
-    if (budgetAmount == null || budgetAmount <= 0) {
-      SnackbarHelper.showError(context, 'Invalid budget');
+    if (_fare == null || _fare! <= 0) {
+      SnackbarHelper.showError(context, 'Calculating fare...');
       return;
     }
 
@@ -165,7 +192,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
         GeoPoint(finalDropoff.latitude, finalDropoff.longitude),
         _sameLocation ? _pickupAddress : _dropoffAddress,
         _itemDescription,
-        budgetAmount,
+        _fare!,
         authService.currentUserModel?.barangayId ?? '',
         authService.currentUserModel?.barangayName ?? '',
         _currentLocation != null 
@@ -195,7 +222,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
               dropoffLocation: GeoPoint(finalDropoff.latitude, finalDropoff.longitude),
               dropoffAddress: _sameLocation ? _pickupAddress : _dropoffAddress,
               itemDescription: _itemDescription,
-              budget: budgetAmount,
+              fare: _fare!,
               status: PasaBuyStatus.pending,
               assignedDriverId: result['assignedDriverId'] as String?,
               driverId: null,
@@ -279,7 +306,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitPasaBuyRequest,
+                  onPressed: (_isSubmitting || _isLoadingFare) ? null : _submitPasaBuyRequest,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryGreen,
                     foregroundColor: Colors.white,
@@ -288,7 +315,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
                     shape: const StadiumBorder(),
                     disabledBackgroundColor: Colors.grey.shade300,
                   ),
-                  child: _isSubmitting
+                  child: (_isSubmitting || _isLoadingFare)
                       ? const SizedBox(
                           width: 24,
                           height: 24,
@@ -477,7 +504,10 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
 
   Widget _buildCompactToggle() {
     return InkWell(
-      onTap: () => setState(() => _sameLocation = !_sameLocation),
+      onTap: () {
+        setState(() => _sameLocation = !_sameLocation);
+        _calculateFareAndETA();
+      },
       borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -488,7 +518,10 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
               height: 20,
               child: Checkbox(
                 value: _sameLocation,
-                onChanged: (val) => setState(() => _sameLocation = val ?? false),
+                onChanged: (val) {
+                  setState(() => _sameLocation = val ?? false);
+                  _calculateFareAndETA();
+                },
                 activeColor: AppTheme.primaryGreen,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                 side: const BorderSide(color: AppTheme.borderLight, width: 1.5),
@@ -618,48 +651,64 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
                     contentPadding: const EdgeInsets.all(12),
                   ),
                 ),
-                const SizedBox(height: 16),
-                const Text(
-                  'ESTIMATED BUDGET',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.textPrimary,
-                    letterSpacing: 0.5,
+                const SizedBox(height: 24),
+                
+                // Delivery Fare instead of Estimated Budget
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.backgroundLight,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppTheme.borderLight),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                           const Text(
+                            'DELIVERY FARE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.textSecondary,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          if (_distance != null)
+                             Text(
+                              '${_distance!.toStringAsFixed(1)} km • ${_duration ?? 0} mins',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                        ],
+                      ),
+                      _isLoadingFare 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                        : Text(
+                            FareService.formatFare(_fare ?? 0),
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.primaryGreen,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _budgetController,
-                  keyboardType: TextInputType.number,
-                  onChanged: (val) => _budget = val,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.primaryGreen,
-                  ),
-                  decoration: InputDecoration(
-                    prefixText: '₱ ',
-                    prefixStyle: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.primaryGreen,
-                    ),
-                    hintText: '0',
-                    hintStyle: const TextStyle(
-                      color: AppTheme.textHint,
-                      fontSize: 18,
-                    ),
-                    filled: true,
-                    fillColor: AppTheme.backgroundLight,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
+                const Text(
+                  '* This is the service fee for the delivery. Payment for items will be coordinated with the driver.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: AppTheme.textSecondary,
                   ),
                 ),
               ],

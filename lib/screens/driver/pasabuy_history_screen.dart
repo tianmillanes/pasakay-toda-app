@@ -91,7 +91,7 @@ class DriverPasaBuyHistoryScreen extends StatelessWidget {
             );
           }
 
-          double totalEarnings = completedRequests.fold(0, (sum, req) => sum + req.budget);
+          double totalEarnings = completedRequests.fold(0, (sum, req) => sum + req.fare);
           int totalDeliveries = completedRequests.length;
 
           return CustomScrollView(

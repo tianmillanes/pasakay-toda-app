@@ -209,7 +209,7 @@ class _PasaBuyRequestCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(_getStatusText().toUpperCase(), style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: _getStatusColor(), letterSpacing: 0.5)),
                   const Spacer(),
-                  Text('₱${request.budget.toStringAsFixed(2)}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: _getStatusColor())),
+                  Text('₱${request.fare.toStringAsFixed(2)}', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: _getStatusColor())),
 
                 ],
               ),

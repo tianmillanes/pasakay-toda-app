@@ -3338,7 +3338,7 @@ class FirestoreService extends ChangeNotifier {
     GeoPoint dropoffLocation,
     String dropoffAddress,
     String itemDescription,
-    double budget,
+    double fare,
     String barangayId,
     String barangayName,
     GeoPoint? currentPassengerLocation, // Passenger's current GPS location
@@ -3357,11 +3357,11 @@ class FirestoreService extends ChangeNotifier {
         };
       }
 
-      // SECURITY: Validate budget
-      if (budget <= 0) {
+      // SECURITY: Validate fare
+      if (fare <= 0) {
         return {
           'success': false,
-          'error': 'Invalid budget amount.',
+          'error': 'Invalid fare amount.',
           'requestId': null,
         };
       }
@@ -3424,7 +3424,7 @@ class FirestoreService extends ChangeNotifier {
         'dropoffLocation': dropoffLocation,
         'dropoffAddress': dropoffAddress,
         'itemDescription': itemDescription,
-        'budget': budget,
+        'fare': fare,
         'status': 'pending',
         'assignedDriverId': null,
         'declinedBy': [],
