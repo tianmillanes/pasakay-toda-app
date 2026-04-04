@@ -4387,19 +4387,35 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A), letterSpacing: 0.5),
                     ),
                     const SizedBox(height: 10),
-                    Opacity(
-                      opacity: _isEditing ? 1.0 : 0.6,
-                      child: IgnorePointer(
-                        ignoring: !_isEditing,
-                        child: BarangaySelector(
-                          selectedBarangay: _selectedBarangay,
-                          onBarangaySelected: (barangay) {
-                            setState(() {
-                              _selectedBarangay = barangay;
-                            });
-                          },
-                        ),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
                       ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.location_on_outlined, size: 20, color: Colors.grey.shade600),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _selectedBarangay?.name ?? 'Not set',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Barangay cannot be changed to maintain queue assignment',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                     ),
                   ],
                 ),

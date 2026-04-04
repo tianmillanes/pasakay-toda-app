@@ -207,7 +207,7 @@ class PasakayApp extends StatelessWidget {
       ],
       child: MaterialApp(
         navigatorKey: navigatorKey,
-        title: 'Pasakay - Booking Made Easy',
+        title: 'Pasakay',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme,
         home: const SplashScreen(),
