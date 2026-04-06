@@ -40,6 +40,7 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
   List<Map<String, dynamic>> _onlineDrivers = [];
   bool _isCheckingDrivers = false;
   bool _isMaintenanceMode = false;
+  bool _isInitializing = true;
   final Set<String> _ignoredRideIds = {};
 
   // Stream subscriptions for proper disposal
@@ -51,15 +52,46 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
   @override
   void initState() {
     super.initState();
-    _initializeNotifications();
-    _checkActiveRide();
-    _checkActivePasaBuy();
-    _checkOnlineDrivers();
-    _startAutomaticDriverCheck();
-    _listenToNotifications();
-    _checkMaintenanceMode();
-    _listenToRecentRides();
-    _listenToFareUpdates();
+    // Defer heavy initialization to after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeDashboard();
+    });
+  }
+  
+  Future<void> _initializeDashboard() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isInitializing = true;
+    });
+    
+    // Initialize in parallel where possible
+    await Future.wait([
+      Future(() => _initializeNotifications()),
+      Future(() => _checkActiveRide()),
+      Future(() => _checkActivePasaBuy()),
+    ], eagerError: false);
+    
+    // These can run in parallel too
+    await Future.wait([
+      _checkMaintenanceModeAsync(),
+      _listenToNotificationsAsync(),
+      _listenToRecentRidesAsync(),
+      _listenToFareUpdatesAsync(),
+    ], eagerError: false);
+    
+    // Start driver check in background after a short delay
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _startAutomaticDriverCheck();
+      }
+    });
+    
+    if (mounted) {
+      setState(() {
+        _isInitializing = false;
+      });
+    }
   }
 
   void _listenToFareUpdates() {
@@ -988,10 +1020,66 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
     }
   }
 
+  Future<void> _checkMaintenanceModeAsync() async {
+    _checkMaintenanceMode();
+  }
+  
+  Future<void> _listenToNotificationsAsync() async {
+    _listenToNotifications();
+  }
+  
+  Future<void> _listenToRecentRidesAsync() async {
+    _listenToRecentRides();
+  }
+  
+  Future<void> _listenToFareUpdatesAsync() async {
+    _listenToFareUpdates();
+  }
+
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
     final user = authService.currentUserModel;
+
+    // Show loading screen during initialization
+    if (_isInitializing || authService.isInitializing) {
+      return Scaffold(
+        backgroundColor: AppTheme.primaryGreen,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.local_taxi,
+                size: 80,
+                color: Colors.white,
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'PASAKAY',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 32),
+              const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Loading your dashboard...',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.8),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (user == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));

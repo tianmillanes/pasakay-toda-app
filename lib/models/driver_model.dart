@@ -9,11 +9,11 @@ class DriverModel {
   final String vehicleType;
   final String plateNumber;
   final String licenseNumber;
-  final String? plateNumberImageUrl; // Image URL for plate number verification
-  final String? licenseNumberImageUrl; // Image URL for license number verification
-  final String? tricyclePlateNumber; // Actual tricycle plate number from input
-  final String? driverLicenseNumber; // Actual driver license number from input
-  final String barangayId; // Barangay where driver operates
+  final String? plateNumberImageUrl;
+  final String? licenseNumberImageUrl;
+  final String? tricyclePlateNumber;
+  final String? driverLicenseNumber;
+  final String barangayId;
   final String barangayName;
   final DriverStatus status;
   final GeoPoint? currentLocation;
@@ -29,8 +29,25 @@ class DriverModel {
   final bool isPaid;
   final DateTime? lastPaidAt;
   final String? paidBy;
-  final String? paymentProofImageBase64; // Proof of payment image (base64)
+  final String? paymentProofImageBase64;
   final DateTime? paymentProofUploadedAt;
+
+  // Philippines Driver's License Details (Extracted from OCR)
+  final String? lastName;
+  final String? firstName;
+  final String? middleName;
+  final String? nationality;
+  final String? sex;
+  final String? dateOfBirth; // Format: YYYY/MM/DD
+  final String? weight; // in kg
+  final String? height; // in meters
+  final String? address;
+  final String? expirationDate; // Format: YYYY/MM/DD
+  final String? agencyCode;
+  final String? bloodType;
+  final String? eyeColor;
+  final String? dlCodes;
+  final String? conditions;
 
   DriverModel({
     required this.id,
@@ -61,6 +78,22 @@ class DriverModel {
     this.paidBy,
     this.paymentProofImageBase64,
     this.paymentProofUploadedAt,
+    // License details
+    this.lastName,
+    this.firstName,
+    this.middleName,
+    this.nationality,
+    this.sex,
+    this.dateOfBirth,
+    this.weight,
+    this.height,
+    this.address,
+    this.expirationDate,
+    this.agencyCode,
+    this.bloodType,
+    this.eyeColor,
+    this.dlCodes,
+    this.conditions,
   });
 
   factory DriverModel.fromFirestore(DocumentSnapshot doc) {
@@ -107,6 +140,22 @@ class DriverModel {
       paymentProofUploadedAt: data['paymentProofUploadedAt'] != null
           ? (data['paymentProofUploadedAt'] as Timestamp).toDate()
           : null,
+      // License details from OCR
+      lastName: data['lastName'],
+      firstName: data['firstName'],
+      middleName: data['middleName'],
+      nationality: data['nationality'],
+      sex: data['sex'],
+      dateOfBirth: data['dateOfBirth'],
+      weight: data['weight'],
+      height: data['height'],
+      address: data['address'],
+      expirationDate: data['expirationDate'],
+      agencyCode: data['agencyCode'],
+      bloodType: data['bloodType'],
+      eyeColor: data['eyeColor'],
+      dlCodes: data['dlCodes'],
+      conditions: data['conditions'],
     );
   }
 
@@ -142,6 +191,22 @@ class DriverModel {
     if (paidBy != null) data['paidBy'] = paidBy;
     if (paymentProofImageBase64 != null) data['paymentProofImageBase64'] = paymentProofImageBase64;
     if (paymentProofUploadedAt != null) data['paymentProofUploadedAt'] = Timestamp.fromDate(paymentProofUploadedAt!);
+    // License details from OCR
+    if (lastName != null) data['lastName'] = lastName;
+    if (firstName != null) data['firstName'] = firstName;
+    if (middleName != null) data['middleName'] = middleName;
+    if (nationality != null) data['nationality'] = nationality;
+    if (sex != null) data['sex'] = sex;
+    if (dateOfBirth != null) data['dateOfBirth'] = dateOfBirth;
+    if (weight != null) data['weight'] = weight;
+    if (height != null) data['height'] = height;
+    if (address != null) data['address'] = address;
+    if (expirationDate != null) data['expirationDate'] = expirationDate;
+    if (agencyCode != null) data['agencyCode'] = agencyCode;
+    if (bloodType != null) data['bloodType'] = bloodType;
+    if (eyeColor != null) data['eyeColor'] = eyeColor;
+    if (dlCodes != null) data['dlCodes'] = dlCodes;
+    if (conditions != null) data['conditions'] = conditions;
 
     return data;
   }
@@ -167,6 +232,22 @@ class DriverModel {
     bool? isPaid,
     DateTime? lastPaidAt,
     String? paidBy,
+    // License details
+    String? lastName,
+    String? firstName,
+    String? middleName,
+    String? nationality,
+    String? sex,
+    String? dateOfBirth,
+    String? weight,
+    String? height,
+    String? address,
+    String? expirationDate,
+    String? agencyCode,
+    String? bloodType,
+    String? eyeColor,
+    String? dlCodes,
+    String? conditions,
   }) {
     return DriverModel(
       id: id,
@@ -193,6 +274,22 @@ class DriverModel {
       isPaid: isPaid ?? this.isPaid,
       lastPaidAt: lastPaidAt ?? this.lastPaidAt,
       paidBy: paidBy ?? this.paidBy,
+      // License details
+      lastName: lastName ?? this.lastName,
+      firstName: firstName ?? this.firstName,
+      middleName: middleName ?? this.middleName,
+      nationality: nationality ?? this.nationality,
+      sex: sex ?? this.sex,
+      dateOfBirth: dateOfBirth ?? this.dateOfBirth,
+      weight: weight ?? this.weight,
+      height: height ?? this.height,
+      address: address ?? this.address,
+      expirationDate: expirationDate ?? this.expirationDate,
+      agencyCode: agencyCode ?? this.agencyCode,
+      bloodType: bloodType ?? this.bloodType,
+      eyeColor: eyeColor ?? this.eyeColor,
+      dlCodes: dlCodes ?? this.dlCodes,
+      conditions: conditions ?? this.conditions,
     );
   }
 }

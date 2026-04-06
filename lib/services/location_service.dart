@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
 import '../models/lat_lng.dart';
 import 'address_search_service.dart';
+import 'loading_state_manager.dart';
 
 // Custom exceptions for better error handling
 class LocationServiceException implements Exception {
@@ -22,7 +23,7 @@ class LocationPermissionException implements Exception {
   String toString() => message;
 }
 
-class LocationService extends ChangeNotifier {
+class LocationService extends ChangeNotifier with LoadingStateMixin {
   Position? _currentPosition;
   Position? get currentPosition => _currentPosition;
 
@@ -38,6 +39,8 @@ class LocationService extends ChangeNotifier {
   List<List<double>>? _barangayGeofence;
   List<List<double>>? _todaTerminalGeofence;
   String? _currentBarangayId; // Track which barangay's geofence is loaded
+  bool _isLoadingGeofences = false;
+  bool get isLoadingGeofences => _isLoadingGeofences;
 
   Future<bool> requestLocationPermission() async {
     bool serviceEnabled;
@@ -217,7 +220,7 @@ class LocationService extends ChangeNotifier {
     return Geolocator.distanceBetween(lat1, lon1, lat2, lon2);
   }
 
-  // Geofencing functions
+  // Geofencing functions with optimized loading
   Future<void> loadGeofences({String? barangayId, bool forceReload = false}) async {
     // Check if we already have the correct barangay geofence loaded
     if (!forceReload && barangayId != null && _currentBarangayId == barangayId && areGeofencesLoaded()) {
@@ -227,18 +230,57 @@ class LocationService extends ChangeNotifier {
       return;
     }
     
+    // Prevent concurrent loading
+    if (_isLoadingGeofences) {
+      if (kDebugMode) {
+        print('Geofence loading already in progress, skipping');
+      }
+      return;
+    }
+    
+    _isLoadingGeofences = true;
+    startLoading(LoadingOperations.loadGeofences, message: 'Loading service areas...');
+    notifyListeners();
+    
     if (kDebugMode) {
       print('Loading geofences from Firestore for barangayId: $barangayId...');
     }
+    
     try {
-      // Load barangay-specific geofence if barangayId is provided
+      // Load both geofences in parallel
+      final List<Future<void>> loadTasks = [];
+      
+      // Load barangay geofence
+      loadTasks.add(_loadBarangayGeofence(barangayId));
+      
+      // Load terminal geofence
+      loadTasks.add(_loadTerminalGeofence(barangayId));
+      
+      // Wait for both to complete
+      await Future.wait(loadTasks, eagerError: false);
+      
+      if (kDebugMode) {
+        print('✅ Geofences loaded successfully');
+      }
+    } catch (e) {
+      print('Error loading geofences: $e');
+      // Don't rethrow - allow app to continue even if geofences fail to load
+    } finally {
+      _isLoadingGeofences = false;
+      stopLoading(LoadingOperations.loadGeofences);
+      notifyListeners();
+    }
+  }
+  
+  Future<void> _loadBarangayGeofence(String? barangayId) async {
+    try {
       if (barangayId != null) {
         DocumentSnapshot barangayDoc = await FirebaseFirestore.instance
             .collection('barangays')
             .doc(barangayId)
             .get()
             .timeout(
-              const Duration(seconds: 10),
+              const Duration(seconds: 8),
               onTimeout: () {
                 throw TimeoutException('Barangay geofence loading timed out');
               },
@@ -272,7 +314,7 @@ class LocationService extends ChangeNotifier {
             .doc('geofence')
             .get()
             .timeout(
-              const Duration(seconds: 10),
+              const Duration(seconds: 8),
               onTimeout: () {
                 throw TimeoutException('Barangay geofence loading timed out');
               },
@@ -291,8 +333,13 @@ class LocationService extends ChangeNotifier {
           }
         }
       }
-
-      // Load TODA terminal geofence - per barangay if barangayId provided, otherwise system-wide
+    } catch (e) {
+      print('Error loading barangay geofence: $e');
+    }
+  }
+  
+  Future<void> _loadTerminalGeofence(String? barangayId) async {
+    try {
       if (barangayId != null) {
         // Load barangay-specific terminal geofence
         DocumentSnapshot barangayDoc = await FirebaseFirestore.instance
@@ -300,7 +347,7 @@ class LocationService extends ChangeNotifier {
             .doc(barangayId)
             .get()
             .timeout(
-              const Duration(seconds: 10),
+              const Duration(seconds: 8),
               onTimeout: () {
                 throw TimeoutException('Terminal geofence loading timed out');
               },
@@ -333,7 +380,7 @@ class LocationService extends ChangeNotifier {
             .doc('terminal_geofence')
             .get()
             .timeout(
-              const Duration(seconds: 10),
+              const Duration(seconds: 8),
               onTimeout: () {
                 throw TimeoutException('Terminal geofence loading timed out');
               },
@@ -352,13 +399,8 @@ class LocationService extends ChangeNotifier {
           }
         }
       }
-      
-      if (kDebugMode) {
-        print('✅ Geofences loaded successfully');
-      }
     } catch (e) {
-      print('Error loading geofences: $e');
-      // Don't rethrow - allow app to continue even if geofences fail to load
+      print('Error loading terminal geofence: $e');
     }
   }
 

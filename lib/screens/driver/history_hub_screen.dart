@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../utils/app_theme.dart';
 import 'trip_history_screen.dart';
 import 'pasabuy_history_screen.dart';
+import 'driver_reviews_screen.dart';
 
 class DriverHistoryHubScreen extends StatefulWidget {
   const DriverHistoryHubScreen({super.key});
@@ -16,7 +17,7 @@ class _DriverHistoryHubScreenState extends State<DriverHistoryHubScreen> with Si
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -53,6 +54,7 @@ class _DriverHistoryHubScreenState extends State<DriverHistoryHubScreen> with Si
           tabs: const [
             Tab(text: 'Trips'),
             Tab(text: 'PasaBuy'),
+            Tab(text: 'My Reviews'),
           ],
         ),
       ),
@@ -61,6 +63,7 @@ class _DriverHistoryHubScreenState extends State<DriverHistoryHubScreen> with Si
         children: const [
           TripHistoryScreen(),
           DriverPasaBuyHistoryScreen(),
+          DriverReviewsScreen(),
         ],
       ),
     );

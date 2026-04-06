@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -27,167 +28,69 @@ import 'screens/admin/admin_dashboard.dart';
 import 'services/route_guard.dart';
 import 'models/user_model.dart';
 
-void main() async {
-  try {
-    WidgetsFlutterBinding.ensureInitialized();
-    print('Starting app initialization...');
+// Global loading state for app initialization
+final ValueNotifier<bool> isAppInitializing = ValueNotifier<bool>(true);
+final ValueNotifier<String> appInitStatus = ValueNotifier<String>('Starting...');
 
-    print('🔥 Initializing Firebase...');
+void main() {
+  // Run app immediately with loading state, then initialize in background
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Start the app immediately with a loading screen
+  runApp(const PasakayAppLoader());
+  
+  // Initialize services in background after first frame
+  SchedulerBinding.instance.addPostFrameCallback((_) {
+    _initializeAppInBackground();
+  });
+}
+
+// Background app initialization
+Future<void> _initializeAppInBackground() async {
+  try {
+    appInitStatus.value = 'Initializing Firebase...';
+    
+    // Initialize Firebase
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
+    
+    // Enable Firestore persistence for better performance
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-        print('✅ Firebase initialized for the first time');
-      } else {
-        print('ℹ️ Firebase already initialized, skipping...');
-      }
-      
-      // Safe initialization of persistence and settings
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      );
+    } catch (e) {
+      print('ℹ️ Firestore settings already applied: $e');
+    }
+    
+    // Set auth persistence on web
+    if (kIsWeb) {
       try {
         await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
       } catch (e) {
-        print('⚠️ Warning: Failed to set Auth persistence: $e');
-      }
-      
-      try {
-        // Disable Firestore persistence caching to ensure fresh data
-        FirebaseFirestore.instance.settings = const Settings(
-          persistenceEnabled: false,
-        );
-      } catch (e) {
-        // This often fails if Firestore was already accessed, which is fine
-        print('ℹ️ Note: Firestore settings already applied or could not be changed: $e');
-      }
-    } catch (e) {
-      if (e.toString().contains('duplicate-app') || e.toString().contains('already-exists')) {
-        print('✅ Firebase already initialized (caught exception)');
-      } else {
-        print('❌ Firebase initialization failed: $e');
-        rethrow;
+        print('⚠️ Auth persistence error: $e');
       }
     }
-
-    // Load environment variables after Firebase is ready
-    print('🔐 Loading environment variables...');
-    await CredentialsConfig.initialize();
-    print('✅ Environment variables loaded');
-
-    print('🎉 Essential initialization complete, launching app...');
-    runApp(const PasakayApp());
     
-    // Initialize non-essential services in background after app starts
+    appInitStatus.value = 'Loading configuration...';
+    await CredentialsConfig.initialize();
+    
+    // Mark initialization complete
+    isAppInitializing.value = false;
+    appInitStatus.value = 'Ready!';
+    
+    // Start background services
     _initializeBackgroundServices();
   } catch (e, stackTrace) {
-    print('❌ CRITICAL ERROR during app initialization: $e');
-    print('Stack trace: $stackTrace');
-    
-    // Ensure WidgetsFlutterBinding is initialized for the error UI
-    WidgetsFlutterBinding.ensureInitialized();
-    
-    runApp(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: Scaffold(
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, size: 80, color: Colors.redAccent),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'App Initialization Error', 
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: Text(
-                      e.toString(),
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        // Restart the app by calling main() again
-                        main();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: const Text('Retry Initialization', style: TextStyle(fontSize: 16)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    ));
-  }
-}
-
-// Initialize non-essential services in background
-Future<void> _initializeBackgroundServices() async {
-  try {
-    print('🔒 Initializing HTTPS enforcement...');
-    HTTPSConfig.logConfiguration();
-    print('✅ HTTPS enforcement initialized');
-
-    print('🗺️ Initializing Mapbox...');
-    // Skip Mapbox initialization on web due to bool.fromEnvironment issue
-    if (kIsWeb) {
-      print('⚠️ Mapbox initialization skipped on web platform');
-    } else {
-      try {
-        mapbox.MapboxOptions.setAccessToken(CredentialsConfig.mapboxAccessToken);
-        print('✅ Mapbox initialized');
-      } catch (e) {
-        print('⚠️ Mapbox initialization failed: $e');
-        print('📱 App will continue without Mapbox');
-      }
-    }
-
-    // Initialize FCM for push notifications
-    print('🔔 Initializing FCM...');
-    try {
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-      await FCMNotificationService().initialize();
-      print('✅ FCM initialized successfully');
-    } catch (e) {
-      print('⚠️ Warning: FCM initialization failed: $e');
-      print('📱 App will continue without push notifications');
-    }
-
-    print('🌐 Initializing Connectivity Service...');
-    try {
-      await ConnectivityService().initialize();
-      print('✅ Connectivity Service initialized successfully');
-    } catch (e) {
-      print('⚠️ Warning: Connectivity Service initialization failed: $e');
-      print('📱 App will continue without connectivity monitoring');
-    }
-
-    print('🎉 Background services initialization complete');
-  } catch (e) {
-    print('⚠️ Background services initialization failed: $e');
+    print('❌ Initialization error: $e');
+    print(stackTrace);
+    appInitStatus.value = 'Error: $e';
+    // Even on error, allow the app to continue
+    isAppInitializing.value = false;
   }
 }
 
@@ -226,5 +129,135 @@ class PasakayApp extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+// App loader widget that shows loading state while initializing
+class PasakayAppLoader extends StatelessWidget {
+  const PasakayAppLoader({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: isAppInitializing,
+      builder: (context, isInitializing, child) {
+        if (isInitializing) {
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.lightTheme,
+            home: const _AppLoadingScreen(),
+          );
+        }
+        return const PasakayApp();
+      },
+    );
+  }
+}
+
+// Loading screen shown during initialization
+class _AppLoadingScreen extends StatelessWidget {
+  const _AppLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.primaryGreen,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Logo
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.local_taxi,
+                size: 60,
+                color: AppTheme.primaryGreen,
+              ),
+            ),
+            const SizedBox(height: 32),
+            const Text(
+              'PASAKAY',
+              style: TextStyle(
+                fontSize: 42,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                letterSpacing: -1.5,
+              ),
+            ),
+            const SizedBox(height: 60),
+            
+            // Loading indicator with status
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                strokeWidth: 4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ValueListenableBuilder<String>(
+              valueListenable: appInitStatus,
+              builder: (context, status, child) {
+                return Text(
+                  status,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.white.withOpacity(0.8),
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Initialize non-essential services in background
+Future<void> _initializeBackgroundServices() async {
+  try {
+    print('🔒 Initializing HTTPS enforcement...');
+    HTTPSConfig.logConfiguration();
+
+    // Initialize Mapbox in background
+    if (!kIsWeb) {
+      try {
+        mapbox.MapboxOptions.setAccessToken(CredentialsConfig.mapboxAccessToken);
+        print('✅ Mapbox initialized');
+      } catch (e) {
+        print('⚠️ Mapbox initialization failed: $e');
+      }
+    }
+
+    // Initialize FCM for push notifications
+    try {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      await FCMNotificationService().initialize();
+      print('✅ FCM initialized');
+    } catch (e) {
+      print('⚠️ FCM initialization failed: $e');
+    }
+
+    // Initialize Connectivity Service
+    try {
+      await ConnectivityService().initialize();
+      print('✅ Connectivity Service initialized');
+    } catch (e) {
+      print('⚠️ Connectivity Service failed: $e');
+    }
+
+    print('🎉 Background services complete');
+  } catch (e) {
+    print('⚠️ Background services failed: $e');
   }
 }

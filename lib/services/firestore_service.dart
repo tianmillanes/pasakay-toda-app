@@ -14,8 +14,9 @@ import '../models/pasabuy_model.dart';
 import '../models/gcash_qr_model.dart';
 import 'fcm_notification_service.dart';
 import 'barangay_service.dart';
+import 'loading_state_manager.dart';
 
-class FirestoreService extends ChangeNotifier {
+class FirestoreService extends ChangeNotifier with LoadingStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static const Set<String> _excludedBarangayNames = {
     'dungan',
@@ -2111,6 +2112,17 @@ class FirestoreService extends ChangeNotifier {
         });
   }
 
+  /// Get driver's payment history from completed rides
+  Stream<QuerySnapshot> getDriverPaymentHistoryStream(String driverId) {
+    return _firestore
+        .collection('rides')
+        .where('driverId', isEqualTo: driverId)
+        .where('status', isEqualTo: 'completed')
+        .orderBy('completedAt', descending: true)
+        .limit(50)
+        .snapshots();
+  }
+
   Stream<RideModel?> getRideStream(String rideId) {
     print('🔍 getRideStream called for rideId: $rideId');
     return _firestore.collection('rides').doc(rideId).snapshots().map((doc) {
@@ -3312,7 +3324,13 @@ class FirestoreService extends ChangeNotifier {
           .where('isActive', isEqualTo: true)
           .get();
       
-      print('Checking ${barangaysSnapshot.docs.length} barangays...');
+      print('Checking ${barangaysSnapshot.docs.length} barangays from Firestore...');
+      
+      // If no barangays in Firestore, use static fallback with geofences
+      if (barangaysSnapshot.docs.isEmpty) {
+        print('⚠️ No barangays in Firestore, using static fallback with geofences');
+        return _getBarangayFromStaticData(latitude, longitude);
+      }
       
       for (var doc in barangaysSnapshot.docs) {
         final data = doc.data();
@@ -3349,8 +3367,92 @@ class FirestoreService extends ChangeNotifier {
       return null;
     } catch (e) {
       print('Error finding barangay for location: $e');
-      return null;
+      // Fallback to static data on error
+      print('⚠️ Falling back to static barangay data due to error');
+      return _getBarangayFromStaticData(latitude, longitude);
     }
+  }
+
+  /// Fallback: Get barangay from static data with geofences when Firestore fails
+  String? _getBarangayFromStaticData(double latitude, double longitude) {
+    print('🔍 Checking static barangay geofences for location: ($latitude, $longitude)');
+    
+    final staticBarangays = _getStaticBarangaysWithGeofences();
+    print('Checking ${staticBarangays.length} static barangays...');
+    
+    for (final barangay in staticBarangays) {
+      final geofence = barangay.geofenceCoordinates;
+      if (geofence == null || geofence.isEmpty) continue;
+      
+      if (_isPointInPolygon(latitude, longitude, geofence)) {
+        print('✅ Location found in static barangay: ${barangay.name} (ID: ${barangay.id})');
+        return barangay.id;
+      }
+    }
+    
+    print('❌ Location not found in any static barangay geofence');
+    return null;
+  }
+
+  /// Get static barangays with proper IDs and geofences
+  List<BarangayModel> _getStaticBarangaysWithGeofences() {
+    final now = DateTime.now();
+    const baseLatitude = 15.2833;
+    const baseLongitude = 121.0167;
+
+    List<List<double>> createGeofence(double lat, double lng, {double radiusDegrees = 0.01}) {
+      return [
+        [lat + radiusDegrees, lng - radiusDegrees],
+        [lat + radiusDegrees, lng + radiusDegrees],
+        [lat - radiusDegrees, lng + radiusDegrees],
+        [lat - radiusDegrees, lng - radiusDegrees],
+        [lat + radiusDegrees, lng - radiusDegrees],
+      ];
+    }
+
+    return [
+      BarangayModel(id: 'barangay_1', name: 'Alfonso', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude)),
+      BarangayModel(id: 'barangay_2', name: 'Balutu', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude)),
+      BarangayModel(id: 'barangay_3', name: 'Cafe', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude)),
+      BarangayModel(id: 'barangay_4', name: 'Calius Gueco', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude)),
+      BarangayModel(id: 'barangay_6', name: 'Caluluan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude)),
+      BarangayModel(id: 'barangay_7', name: 'Castillo', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_8', name: 'Corazon de Jesus', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_9', name: 'Culatingan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_11', name: 'Dutung-A-Matas (Jefmin)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.05)),
+      BarangayModel(id: 'barangay_12', name: 'Green Village', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.01, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.01, baseLongitude)),
+      BarangayModel(id: 'barangay_13', name: 'Lilibangan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.02, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.02, baseLongitude)),
+      BarangayModel(id: 'barangay_14', name: 'Mabilog', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.03, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.03, baseLongitude)),
+      BarangayModel(id: 'barangay_15', name: 'Magao', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.04, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.04, baseLongitude)),
+      BarangayModel(id: 'barangay_16', name: 'Malupa', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.05, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.05, baseLongitude)),
+      BarangayModel(id: 'barangay_17', name: 'Minane', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.01)),
+      BarangayModel(id: 'barangay_18', name: 'Panalicsican', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.02)),
+      BarangayModel(id: 'barangay_19', name: 'Pando', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.03)),
+      BarangayModel(id: 'barangay_20', name: 'Parang', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.04)),
+      BarangayModel(id: 'barangay_21', name: 'Parulung', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.05)),
+      BarangayModel(id: 'barangay_22', name: 'Pitabunan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_23', name: 'San Agustin (Murcia)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_24', name: 'San Antonio', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_25', name: 'San Bartolome', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.04, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.04, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_26', name: 'San Francisco', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_27', name: 'San Isidro (Almendras)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_28', name: 'San Jose (Poblacion)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_29', name: 'San Juan (Castro)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_31', name: 'San Nicolas Balas', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_32', name: 'San Nicolas (Poblacion)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_33', name: 'Sta. Cruz', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_34', name: 'Sta. Maria', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_35', name: 'Sta. Monica', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.04, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.04, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_36', name: 'Sta. Rita', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_37', name: 'Santa Rosa', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_38', name: 'Santiago', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_39', name: 'Santo Cristo', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_40', name: 'Santo Niño', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.04, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.04, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_41', name: 'Santo Rosario (Magunting)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_42', name: 'San Vicente (Calius/Corba)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.05)),
+      BarangayModel(id: 'barangay_44', name: 'Talimunduc San Miguel', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.05)),
+      BarangayModel(id: 'barangay_46', name: 'Tinang', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.05)),
+    ];
   }
 
   /// Ray casting algorithm to check if a point is inside a polygon

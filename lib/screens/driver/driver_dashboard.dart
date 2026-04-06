@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../../services/auth_service.dart';
@@ -40,6 +41,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   PasaBuyModel? _activePasaBuy;
   bool _isMaintenanceMode = false;
   bool _isLoading = true;
+  bool _isInitializing = true;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
       _membershipNoticeSubscription;
   final List<Map<String, dynamic>> _pendingMembershipNotices = [];
@@ -49,13 +51,64 @@ class _DriverDashboardState extends State<DriverDashboard> {
   @override
   void initState() {
     super.initState();
-    _initializeNotifications();
-    _loadDriverProfile();
+    // Defer heavy initialization to after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeDashboard();
+    });
+  }
+  
+  Future<void> _initializeDashboard() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isInitializing = true;
+    });
+    
+    // Load critical data first in parallel
+    await Future.wait([
+      _loadDriverProfile(),
+      Future(() => _initializeNotifications()),
+    ], eagerError: false);
+    
+    // Then start listeners in parallel
+    await Future.wait([
+      _checkMaintenanceModeAsync(),
+      _checkActiveRideAsync(),
+      _checkActivePasaBuyAsync(),
+      _listenToDriverNotificationsAsync(),
+      _listenToMembershipNoticesAsync(),
+      _listenToFareUpdatesAsync(),
+    ], eagerError: false);
+    
+    if (mounted) {
+      setState(() {
+        _isInitializing = false;
+        _isLoading = false;
+      });
+    }
+  }
+  
+  Future<void> _checkMaintenanceModeAsync() async {
     _checkMaintenanceMode();
+  }
+  
+  Future<void> _checkActiveRideAsync() async {
     _checkActiveRide();
+  }
+  
+  Future<void> _checkActivePasaBuyAsync() async {
     _checkActivePasaBuy();
+  }
+  
+  Future<void> _listenToDriverNotificationsAsync() async {
     _listenToDriverNotifications();
+  }
+  
+  Future<void> _listenToMembershipNoticesAsync() async {
     _listenToMembershipNotices();
+  }
+  
+  Future<void> _listenToFareUpdatesAsync() async {
     _listenToFareUpdates();
   }
 
@@ -1021,6 +1074,46 @@ class _DriverDashboardState extends State<DriverDashboard> {
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final user = authService.currentUserModel;
+
+    // Show enhanced loading screen during initialization
+    if (_isInitializing || authService.isInitializing) {
+      return Scaffold(
+        backgroundColor: AppTheme.primaryGreen,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.local_taxi,
+                size: 80,
+                color: Colors.white,
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'PASAKAY DRIVER',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 32),
+              const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Loading your dashboard...',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.8),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (user == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -2952,20 +3045,24 @@ class _ProfileTabState extends State<_ProfileTab> {
                             Text(
                               driverProfile.name,
                               style: const TextStyle(
-                                fontSize: 24,
+                                fontSize: 20,
                                 fontWeight: FontWeight.w800,
                                 color: Color(0xFF1A1A1A),
                                 letterSpacing: -0.5,
                               ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
-                            Row(
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
                               children: [
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                   decoration: BoxDecoration(
                                     color: AppTheme.primaryGreen.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(20),
+                                    borderRadius: BorderRadius.circular(16),
                                     border: Border.all(
                                       color: AppTheme.primaryGreen.withOpacity(0.3),
                                       width: 1,
@@ -2974,12 +3071,12 @@ class _ProfileTabState extends State<_ProfileTab> {
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      const Icon(Icons.verified_rounded, color: AppTheme.primaryGreen, size: 16),
-                                      const SizedBox(width: 6),
+                                      const Icon(Icons.verified_rounded, color: AppTheme.primaryGreen, size: 14),
+                                      const SizedBox(width: 4),
                                       const Text(
-                                        'Verified Driver',
+                                        'Verified',
                                         style: TextStyle(
-                                          fontSize: 13,
+                                          fontSize: 12,
                                           color: AppTheme.primaryGreen,
                                           fontWeight: FontWeight.w700,
                                         ),
@@ -2987,7 +3084,6 @@ class _ProfileTabState extends State<_ProfileTab> {
                                     ],
                                   ),
                                 ),
-                                const SizedBox(width: 8),
                                 if (_ratingFuture != null)
                                   FutureBuilder<Map<String, dynamic>>(
                                     future: _ratingFuture,
@@ -2997,10 +3093,10 @@ class _ProfileTabState extends State<_ProfileTab> {
                                       final int total = snapshot.data!['totalRatings'] ?? 0;
                                       
                                       return Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                         decoration: BoxDecoration(
                                           color: Colors.amber.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(20),
+                                          borderRadius: BorderRadius.circular(16),
                                           border: Border.all(
                                             color: Colors.amber.withOpacity(0.3),
                                             width: 1,
@@ -3009,12 +3105,12 @@ class _ProfileTabState extends State<_ProfileTab> {
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            const Icon(Icons.star_rounded, color: Colors.amber, size: 16),
+                                            const Icon(Icons.star_rounded, color: Colors.amber, size: 14),
                                             const SizedBox(width: 4),
                                             Text(
                                               rating > 0 ? rating.toStringAsFixed(1) : 'New',
                                               style: TextStyle(
-                                                fontSize: 13,
+                                                fontSize: 12,
                                                 color: Colors.amber.shade700,
                                                 fontWeight: FontWeight.w800,
                                               ),
@@ -3024,7 +3120,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                                               Text(
                                                 '($total)',
                                                 style: TextStyle(
-                                                  fontSize: 11,
+                                                  fontSize: 10,
                                                   color: Colors.amber.shade700,
                                                   fontWeight: FontWeight.w600,
                                                 ),
@@ -3037,11 +3133,11 @@ class _ProfileTabState extends State<_ProfileTab> {
                                   ),
                               ],
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 6),
                             Text(
                               'Ready to serve your community',
                               style: TextStyle(
-                                fontSize: 14,
+                                fontSize: 13,
                                 color: Colors.grey.shade600,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -3215,40 +3311,160 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   void _showVehicleInfo(BuildContext context, DriverModel driverProfile) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => Scaffold(
+          backgroundColor: const Color(0xFFF8F9FA),
+          appBar: AppBar(
+            title: const Text('Vehicle & License Info'),
+            backgroundColor: Colors.white,
+            foregroundColor: const Color(0xFF1A1A1A),
+            elevation: 0,
+            centerTitle: true,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Vehicle Information Card
+                  _buildSectionCard(
+                    'Vehicle Information',
+                    Icons.directions_car_rounded,
+                    Colors.grey.shade700,
+                    [
+                      _buildDetailItem('Vehicle Type', driverProfile.vehicleType, Icons.local_taxi_outlined),
+                      _buildDetailItem('Plate Number', driverProfile.tricyclePlateNumber ?? driverProfile.plateNumber ?? 'N/A', Icons.pin_outlined),
+                      _buildDetailItem('Barangay', driverProfile.barangayName, Icons.location_city_outlined),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // License Information Card
+                  _buildSectionCard(
+                    'Driver\'s License Details',
+                    Icons.badge_outlined,
+                    AppTheme.primaryGreen,
+                    [
+                      if (driverProfile.lastName != null && driverProfile.firstName != null)
+                        _buildDetailItem('Full Name', '${driverProfile.lastName}, ${driverProfile.firstName} ${driverProfile.middleName ?? ''}', Icons.person_outline),
+                      _buildDetailItem('License Number', driverProfile.driverLicenseNumber ?? driverProfile.licenseNumber ?? 'N/A', Icons.badge_outlined),
+                      if (driverProfile.nationality != null)
+                        _buildDetailItem('Nationality', driverProfile.nationality!, Icons.flag_outlined),
+                      if (driverProfile.sex != null)
+                        _buildDetailItem('Sex', driverProfile.sex!, Icons.people_outline),
+                      if (driverProfile.dateOfBirth != null)
+                        _buildDetailItem('Date of Birth', driverProfile.dateOfBirth!, Icons.cake_outlined),
+                      if (driverProfile.expirationDate != null)
+                        _buildDetailItem('Expiration Date', driverProfile.expirationDate!, Icons.event_outlined),
+                      if (driverProfile.agencyCode != null)
+                        _buildDetailItem('Agency Code', driverProfile.agencyCode!, Icons.business_outlined),
+                      if (driverProfile.dlCodes != null)
+                        _buildDetailItem('DL Codes', driverProfile.dlCodes!, Icons.category_outlined),
+                      if (driverProfile.eyeColor != null)
+                        _buildDetailItem('Eye Color', driverProfile.eyeColor!, Icons.visibility_outlined),
+                      if (driverProfile.bloodType != null)
+                        _buildDetailItem('Blood Type', driverProfile.bloodType!, Icons.water_drop_outlined),
+                      if (driverProfile.address != null)
+                        _buildDetailItem('Address', driverProfile.address!, Icons.home_outlined),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
         ),
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Vehicle Information',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildSectionCard(String title, IconData icon, Color color, List<Widget> children) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: color,
                 ),
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+          const Divider(height: 20),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailItem(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppTheme.accentBlue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: AppTheme.accentBlue, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade500,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A1A),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            _buildInfoRow(Icons.directions_car_rounded, 'Vehicle Type', driverProfile.vehicleType),
-            _buildInfoRow(Icons.tag_rounded, 'Plate Number', driverProfile.tricyclePlateNumber ?? driverProfile.plateNumber),
-            _buildInfoRow(Icons.location_city_rounded, 'Barangay', driverProfile.barangayName),
-            _buildInfoRow(Icons.badge_rounded, 'License Number', driverProfile.driverLicenseNumber ?? driverProfile.licenseNumber),
-            const SizedBox(height: 24),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -3297,8 +3513,9 @@ class _ProfileTabState extends State<_ProfileTab> {
 
   Widget _buildInfoRow(IconData icon, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             padding: const EdgeInsets.all(8),
@@ -3306,15 +3523,34 @@ class _ProfileTabState extends State<_ProfileTab> {
               color: AppTheme.accentBlue.withOpacity(0.1),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(icon, color: AppTheme.accentBlue, size: 20),
+            child: Icon(icon, color: AppTheme.accentBlue, size: 18),
           ),
-          const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label, 
+                  style: TextStyle(
+                    fontSize: 12, 
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value, 
+                  style: const TextStyle(
+                    fontSize: 15, 
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A1A),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -4723,6 +4959,201 @@ class _DriverEditProfileScreenState extends State<DriverEditProfileScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// Payment History Screen
+class DriverPaymentHistoryScreen extends StatelessWidget {
+  const DriverPaymentHistoryScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final firestoreService = Provider.of<FirestoreService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final driverId = authService.currentUser?.uid;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FA),
+      appBar: AppBar(
+        title: const Text('Payment History'),
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF1A1A1A),
+        elevation: 0,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: SafeArea(
+        child: StreamBuilder<QuerySnapshot>(
+          stream: driverId != null 
+            ? firestoreService.getDriverPaymentHistoryStream(driverId)
+            : null,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator(color: AppTheme.primaryGreen));
+            }
+
+            if (snapshot.hasError) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline, size: 48, color: Colors.grey.shade400),
+                    const SizedBox(height: 16),
+                    Text('Error loading payments', style: TextStyle(color: Colors.grey.shade600)),
+                  ],
+                ),
+              );
+            }
+
+            final payments = snapshot.data?.docs ?? [];
+
+            if (payments.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey.shade300),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No payment history yet',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Your completed ride payments will appear here',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade400,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: payments.length,
+              itemBuilder: (context, index) {
+                final payment = payments[index].data() as Map<String, dynamic>;
+                final amount = payment['amount'] ?? 0.0;
+                final status = payment['status'] ?? 'pending';
+                final timestamp = payment['timestamp'] as Timestamp?;
+                final date = timestamp?.toDate() ?? DateTime.now();
+                final rideId = payment['rideId'] ?? '';
+                final passengerName = payment['passengerName'] ?? 'Passenger';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.03),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: status == 'completed' 
+                            ? AppTheme.primaryGreen.withOpacity(0.1)
+                            : Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          status == 'completed' ? Icons.check_circle : Icons.pending,
+                          color: status == 'completed' ? AppTheme.primaryGreen : Colors.orange,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              passengerName,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1A1A1A),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              DateFormat('MMM d, yyyy • h:mm a').format(date),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: status == 'completed'
+                                  ? AppTheme.primaryGreen.withOpacity(0.1)
+                                  : Colors.orange.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                status.toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: status == 'completed' ? AppTheme.primaryGreen : Colors.orange,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            '₱${amount.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.primaryGreen,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Fare',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ),
     );
   }
 }

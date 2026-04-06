@@ -71,9 +71,10 @@ class _DriverRatingDialogState extends State<DriverRatingDialog> {
       backgroundColor: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -177,6 +178,6 @@ class _DriverRatingDialogState extends State<DriverRatingDialog> {
           ],
         ),
       ),
-    );
+    ));
   }
 }

@@ -48,112 +48,93 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _initializeApp() async {
     try {
-      print('🏁 [SplashScreen] Starting initialization...');
+      print('[SplashScreen] Starting initialization...');
       
-      // Perform initialization without an artificial global timeout
-      // Individual services within _performInitialization have their own timeouts
-      await _performInitialization();
+      // Don't block on geofence loading - it's done in background
+      // Just start location services setup
+      _performBackgroundInitialization();
       
-      print('✅ [SplashScreen] Initialization complete');
-    } catch (e) {
-      print('⚠️ [SplashScreen] Initialization error: $e');
+      // Minimal splash display - just enough for branding
+      await Future.delayed(const Duration(milliseconds: 800));
+      
+      if (!mounted) return;
+      
+      print('[SplashScreen] Checking authentication...');
       setState(() {
-        _loadingText = 'Starting app...';
+        _loadingText = 'Checking authentication...';
       });
-
-      // Continue even if some services fail
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      if (mounted) {
-        print('📱 [SplashScreen] Navigating to login screen');
-        Navigator.of(context).pushReplacementNamed('/login');
-      }
-    }
-  }
-
-  Future<void> _performInitialization() async {
-    print('📍 [SplashScreen] Setting up location services...');
-    setState(() {
-      _loadingText = 'Setting up location services...';
-    });
-
-    // Skip geofence loading on web platform - load in background instead
-    if (!kIsWeb) {
-      // Initialize location service but load geofences in background
-      final locationService = Provider.of<LocationService>(
-        context,
-        listen: false,
-      );
       
-      // Start geofence loading in background without blocking
-      Future.microtask(() async {
-        try {
-          await locationService.loadGeofences().timeout(
+      final authService = Provider.of<AuthService>(context, listen: false);
+      
+      if (authService.currentUser != null) {
+        print('[SplashScreen] User is authenticated');
+        
+        // Quick check if user data is available
+        if (authService.currentUserModel == null) {
+          print('[SplashScreen] User data not loaded yet, refreshing...');
+          setState(() {
+            _loadingText = 'Loading profile...';
+          });
+          await authService.refreshUserData().timeout(
             const Duration(seconds: 5),
             onTimeout: () {
-              print('⚠️ Warning: Background geofence loading timed out');
+              print('[SplashScreen] Warning: User data refresh timed out');
             },
           );
-          print('✅ Background geofences loaded successfully');
-        } catch (e) {
-          print('⚠️ Warning: Background geofence loading failed: $e');
         }
-      });
-      print('🔄 Geofence loading started in background');
-    } else {
-      print('🌐 Web platform detected, skipping geofence loading');
-    }
-
-    print('🎨 [SplashScreen] Preparing experience...');
-    setState(() {
-      _loadingText = 'GINHAWANG SAKAY MULA SA BAHAY';
-    });
-
-    // Short, non-blocking splash display to keep app feeling fast
-    await Future.delayed(const Duration(seconds: 1));
-
-    if (mounted) {
-      print('🔐 [SplashScreen] Checking authentication...');
-      final authService = Provider.of<AuthService>(context, listen: false);
-
-      if (authService.currentUser != null) {
-        print('👤 User is authenticated, ensuring user data is loaded...');
         
-        // Ensure user data is loaded before redirecting
-        if (authService.currentUserModel == null) {
-          print('🔄 User data not loaded yet, refreshing...');
-          await authService.refreshUserData().timeout(
-            const Duration(seconds: 10),
-            onTimeout: () {
-              print('⚠️ Warning: User data refresh timed out in SplashScreen');
-            },
+        final route = authService.getRedirectRoute();
+        print('[SplashScreen] Navigating to: $route');
+        
+        if (mounted) {
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            route,
+            (route) => false,
           );
         }
-
-        // Trigger cleanup after user is authenticated
-        print('🧹 [SplashScreen] User authenticated, triggering cleanup...');
-        final firestoreService = Provider.of<FirestoreService>(
-          context,
-          listen: false,
-        );
-
-        final route = authService.getRedirectRoute();
-        print('✅ Navigating to: $route');
-        // Clear entire stack and push new route to prevent going back to splash
-        Navigator.of(context).pushNamedAndRemoveUntil(
-          route,
-          (route) => false,
-        );
       } else {
-        // User is not logged in, go to login screen
-        print('🔓 No user authenticated, navigating to login');
-        // Clear entire stack and push new route to prevent going back to splash
+        print('[SplashScreen] No user authenticated, navigating to login');
+        if (mounted) {
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            '/login',
+            (route) => false,
+          );
+        }
+      }
+    } catch (e) {
+      print('[SplashScreen] Initialization error: $e');
+      // Continue to login on error
+      if (mounted) {
         Navigator.of(context).pushNamedAndRemoveUntil(
           '/login',
           (route) => false,
         );
       }
     }
+  }
+
+  void _performBackgroundInitialization() {
+    // Skip geofence loading on web platform
+    if (kIsWeb) return;
+    
+    // Start geofence loading in background without blocking
+    Future.microtask(() async {
+      try {
+        final locationService = Provider.of<LocationService>(
+          context,
+          listen: false,
+        );
+        await locationService.loadGeofences().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            print('[SplashScreen] Background geofence loading timed out');
+          },
+        );
+        print('[SplashScreen] Background geofences loaded');
+      } catch (e) {
+        print('[SplashScreen] Background geofence loading failed: $e');
+      }
+    });
   }
 
   @override
@@ -193,24 +174,24 @@ class _SplashScreenState extends State<SplashScreen>
                         letterSpacing: -1.5,
                       ),
                     ),
-                    const SizedBox(height: 80),
+                    const SizedBox(height: 40),
 
                     // Loading indicator with status
                     Column(
                       children: [
                         const SizedBox(
-                          width: 40,
-                          height: 40,
+                          width: 36,
+                          height: 36,
                           child: CircularProgressIndicator(
                             valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            strokeWidth: 4,
+                            strokeWidth: 3,
                           ),
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 16),
                         Text(
                           _loadingText,
                           style: TextStyle(
-                            fontSize: 16,
+                            fontSize: 14,
                             color: Colors.white.withOpacity(0.8),
                             fontWeight: FontWeight.w500,
                           ),
@@ -218,8 +199,6 @@ class _SplashScreenState extends State<SplashScreen>
                         ),
                       ],
                     ),
-                    
-                    const SizedBox(height: 100),
                   ],
                 ),
               ),

@@ -19,6 +19,9 @@ class AuthService extends ChangeNotifier {
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
+  
+  bool _isInitializing = true;
+  bool get isInitializing => _isInitializing;
 
   static const String _kStoredUserId = 'user_id';
   static const String _kRememberMe = 'remember_me';
@@ -48,8 +51,24 @@ class AuthService extends ChangeNotifier {
   }
 
   AuthService() {
-    _auth.authStateChanges().listen(_onAuthStateChanged);
-    _initializePersistentSession();
+    _initializeAuth();
+  }
+  
+  Future<void> _initializeAuth() async {
+    try {
+      _isInitializing = true;
+      notifyListeners();
+      
+      _auth.authStateChanges().listen(_onAuthStateChanged);
+      await _initializePersistentSession();
+      
+      _isInitializing = false;
+      notifyListeners();
+    } catch (e) {
+      _logError('Error initializing auth', e);
+      _isInitializing = false;
+      notifyListeners();
+    }
   }
 
   /// Initialize persistent session from secure storage
@@ -358,6 +377,9 @@ class AuthService extends ChangeNotifier {
     bool rememberMe = true,
   }) async {
     try {
+      _isLoading = true;
+      notifyListeners();
+      
       final cleanEmail = email.trim().toLowerCase();
       
       // Input validation
@@ -384,11 +406,6 @@ class AuthService extends ChangeNotifier {
       }
       
       _logDebug('Attempting sign in with email: $cleanEmail');
-      try {
-        _logDebug('Firebase project ID: ${DefaultFirebaseOptions.currentPlatform.projectId}');
-      } catch (_) {
-        _logDebug('Could not log project ID - platform might not be fully configured');
-      }
       
       // Set persistence based on the rememberMe flag - only on Web
       if (kIsWeb) {
@@ -401,21 +418,23 @@ class AuthService extends ChangeNotifier {
       );
       
       // OPTIMIZATION: Load user model immediately and validate account status
-      // This replaces the redundant Firestore fetch and ensures model is ready
       await _loadUserModel(result.user!.uid);
       
       // Check if loading succeeded and account is active
       if (_currentUserModel == null) {
         // If user is null, it means account was deactivated and signed out by _loadUserModel
         if (_auth.currentUser == null) {
+          _isLoading = false;
+          notifyListeners();
           throw FirebaseAuthException(
             code: 'user-disabled',
             message: 'This account has been deactivated. Please contact support.',
           );
         } else {
           // Loading failed (network error, etc.) but still signed in
-          // Sign out to prevent inconsistent state
           await signOut();
+          _isLoading = false;
+          notifyListeners();
           throw FirebaseAuthException(
             code: 'network-error',
             message: 'Failed to load user profile. Please check your connection.',
@@ -426,17 +445,18 @@ class AuthService extends ChangeNotifier {
       await setRememberMe(rememberMe);
       
       _logDebug('Sign in successful for user: ${result.user?.uid}');
+      _isLoading = false;
+      notifyListeners();
       return result;
     } on FirebaseAuthException catch (e) {
       _logError('Sign in error', e);
-      _logError('FirebaseAuth code: ${e.code}, message: ${e.message}', e);
-      try {
-        _logDebug('Firebase project ID: ${DefaultFirebaseOptions.currentPlatform.projectId}');
-      } catch (_) {}
-      rethrow; // Preserve the FirebaseAuthException for the UI to handle
+      _isLoading = false;
+      notifyListeners();
+      rethrow;
     } catch (e) {
       _logError('Unexpected sign in error', e);
-      _logError('Error type: ${e.runtimeType}', e);
+      _isLoading = false;
+      notifyListeners();
       throw FirebaseAuthException(
         code: 'unknown-error',
         message: 'An unexpected error occurred. Please try again.',
@@ -446,8 +466,15 @@ class AuthService extends ChangeNotifier {
 
   Future<UserCredential?> signInWithGoogle({UserRole role = UserRole.passenger}) async {
     try {
+      _isLoading = true;
+      notifyListeners();
+      
       final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) return null; // User canceled
+      if (googleUser == null) {
+        _isLoading = false;
+        notifyListeners();
+        return null;
+      }
 
       final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
       final OAuthCredential credential = GoogleAuthProvider.credential(
@@ -458,9 +485,13 @@ class AuthService extends ChangeNotifier {
       final UserCredential result = await _auth.signInWithCredential(credential);
       await _handleSocialLogin(result.user, role);
       
+      _isLoading = false;
+      notifyListeners();
       return result;
     } catch (e) {
       _logError('Google Sign-In Error', e);
+      _isLoading = false;
+      notifyListeners();
       rethrow;
     }
   }
@@ -501,16 +532,25 @@ class AuthService extends ChangeNotifier {
     bool skipExistsCheck = false,
   }) async {
     try {
+      _isLoading = true;
+      notifyListeners();
+      
       // SECURITY: Validate inputs
       if (name.trim().isEmpty || name.length < 2 || name.length > 100) {
+        _isLoading = false;
+        notifyListeners();
         throw 'Invalid name. Must be between 2-100 characters.';
       }
 
       if (role == UserRole.driver && (barangayId.trim().isEmpty || barangayName.trim().isEmpty)) {
+        _isLoading = false;
+        notifyListeners();
         throw 'Barangay selection is mandatory for drivers.';
       }
       
       if (phone.trim().isEmpty) {
+        _isLoading = false;
+        notifyListeners();
         throw 'Phone number is required.';
       }
 
@@ -518,12 +558,16 @@ class AuthService extends ChangeNotifier {
       if (!skipExistsCheck) {
         final phoneExists = await _isPhoneNumberTaken(phone);
         if (phoneExists) {
+          _isLoading = false;
+          notifyListeners();
           throw 'This phone number is already registered. Please use a different number.';
         }
 
         // Check if email is already registered (skip if requested)
         final emailExists = await _isEmailTaken(email);
         if (emailExists) {
+          _isLoading = false;
+          notifyListeners();
           throw 'This email address is already registered. Please use a different email.';
         }
       }
@@ -540,6 +584,8 @@ class AuthService extends ChangeNotifier {
           password: password,
         );
       } on FirebaseAuthException catch (e) {
+        _isLoading = false;
+        notifyListeners();
         if (e.code == 'email-already-in-use') {
           throw 'This email address is already registered. Please use a different email.';
         }
@@ -566,9 +612,13 @@ class AuthService extends ChangeNotifier {
         _currentUserModel = userModel;
       }
 
+      _isLoading = false;
+      notifyListeners();
       return result;
     } catch (e) {
       _logError('Registration error', e);
+      _isLoading = false;
+      notifyListeners();
       rethrow;
     }
   }

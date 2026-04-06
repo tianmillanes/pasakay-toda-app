@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import '../../services/auth_service.dart';
 import '../../services/verification_service.dart';
 import '../../services/connectivity_service.dart';
+import '../../services/license_scanning_service.dart';
+import '../../services/barangay_service.dart';
 import '../../models/user_model.dart';
 import '../../models/driver_model.dart';
 import '../../services/firestore_service.dart';
@@ -16,13 +18,12 @@ import 'terms_and_conditions_screen.dart';
 import '../../widgets/barangay_selector.dart';
 import '../../models/barangay_model.dart';
 import '../../utils/app_theme.dart';
-import '../../models/barangay_model.dart';
 import '../../widgets/tricycle_logo.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 enum DriverRegistrationStep {
   userInfo,
   verification,
+  licenseInfo, // New step for license upload and scanning
   vehicleInfo,
   complete,
 }
@@ -36,17 +37,34 @@ class DriverRegisterScreenWithVerification extends StatefulWidget {
 
 class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScreenWithVerification> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _tricyclePlateController = TextEditingController();
-  final _driverLicenseController = TextEditingController();
+
+  // License details extracted from OCR - read-only display
+  String? _extractedFullName;
+  String? _extractedLicenseNumber;
+  String? _extractedLastName;
+  String? _extractedFirstName;
+  String? _extractedMiddleName;
+  String? _extractedNationality;
+  String? _extractedSex;
+  String? _extractedDateOfBirth;
+  String? _extractedWeight;
+  String? _extractedHeight;
+  String? _extractedAddress;
+  String? _extractedExpirationDate;
+  String? _extractedAgencyCode;
+  String? _extractedBloodType;
+  String? _extractedEyeColor;
+  String? _extractedDLCodes;
+  String? _extractedConditions;
 
   DriverRegistrationStep _currentStep = DriverRegistrationStep.userInfo;
   VerificationType _selectedVerificationType = VerificationType.email;
-  
+
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -61,23 +79,25 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
   XFile? _licenseNumberImage;
 
   late VerificationService _verificationService;
+  late LicenseScanningService _licenseScanningService;
 
   @override
   void initState() {
     super.initState();
     _verificationService = VerificationService();
+    _licenseScanningService = LicenseScanningService();
+    _licenseScanningService.initialize();
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _tricyclePlateController.dispose();
-    _driverLicenseController.dispose();
     _verificationService.dispose();
+    _licenseScanningService.dispose();
     super.dispose();
   }
 
@@ -106,10 +126,40 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
         
         if (!isPlateNumber) {
           _processLicenseImage(image.path);
+        } else {
+          _processPlateImage(image.path);
         }
       }
     } catch (e) {
       if (mounted) SnackbarHelper.showError(context, 'Failed to capture image');
+    }
+  }
+
+  Future<void> _processPlateImage(String imagePath) async {
+    setState(() => _isScanningLicense = true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Scanning plate number...'), duration: Duration(seconds: 2)),
+      );
+    }
+
+    try {
+      final plateNumber = await _licenseScanningService.scanPlateNumber(imagePath);
+
+      if (mounted) {
+        if (plateNumber != null && plateNumber.isNotEmpty) {
+          setState(() {
+            _tricyclePlateController.text = plateNumber;
+          });
+          SnackbarHelper.showSuccess(context, 'Plate number detected: $plateNumber');
+        } else {
+          SnackbarHelper.showError(context, 'Could not detect plate number. Please enter manually.');
+        }
+      }
+    } catch (e) {
+      if (mounted) SnackbarHelper.showError(context, 'Failed to scan plate image: $e');
+    } finally {
+      if (mounted) setState(() => _isScanningLicense = false);
     }
   }
 
@@ -120,52 +170,358 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
         const SnackBar(content: Text('Scanning license details...'), duration: Duration(seconds: 2)),
       );
     }
-    
-    try {
-      final inputImage = InputImage.fromFilePath(imagePath);
-      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
-      
-      String extractedLicense = '';
-      
-      final RegExp licenseRegExp = RegExp(r'[A-Z0-9]{3}-?[0-9]{2}-?[0-9]{6}');
-      
-      for (TextBlock block in recognizedText.blocks) {
-        for (TextLine line in block.lines) {
-          final text = line.text.trim();
-          
-          if (licenseRegExp.hasMatch(text)) {
-            extractedLicense = licenseRegExp.firstMatch(text)?.group(0) ?? '';
-            break;
-          }
-        }
-        if (extractedLicense.isNotEmpty) break;
-      }
-      
-      textRecognizer.close();
 
-      if (extractedLicense.isNotEmpty && mounted) {
+    try {
+      final licenseDetails = await _licenseScanningService.scanLicense(imagePath);
+
+      if (mounted) {
         setState(() {
-          _driverLicenseController.text = extractedLicense;
+          _extractedFullName = licenseDetails.formattedFullName;
+          _extractedLicenseNumber = licenseDetails.licenseNumber;
+          _extractedLastName = licenseDetails.lastName;
+          _extractedFirstName = licenseDetails.firstName;
+          _extractedMiddleName = licenseDetails.middleName;
+          _extractedNationality = licenseDetails.nationality;
+          _extractedSex = licenseDetails.sex;
+          _extractedDateOfBirth = licenseDetails.dateOfBirth;
+          _extractedWeight = licenseDetails.weight;
+          _extractedHeight = licenseDetails.height;
+          _extractedAddress = licenseDetails.address;
+          _extractedExpirationDate = licenseDetails.expirationDate;
+          _extractedAgencyCode = licenseDetails.agencyCode;
+          _extractedBloodType = licenseDetails.bloodType;
+          _extractedEyeColor = licenseDetails.eyeColor;
+          _extractedDLCodes = licenseDetails.dlCodes;
+          _extractedConditions = licenseDetails.conditions;
         });
-        SnackbarHelper.showSuccess(context, 'Auto-filled License Number: $extractedLicense');
-      } else if (mounted) {
-         SnackbarHelper.showError(context, 'Could not detect License Number. Please enter manually.');
+
+        // Auto-detect barangay from license address
+        await _detectBarangayFromAddress();
+
+        if (_extractedFullName != null && _extractedFullName!.isNotEmpty) {
+          SnackbarHelper.showSuccess(context, 'License scanned successfully! Name: $_extractedFullName');
+        } else {
+          SnackbarHelper.showError(context, 'Could not detect all license details. Please verify the information.');
+        }
       }
-      
     } catch (e) {
-      if (mounted) SnackbarHelper.showError(context, 'Failed to scan license image.');
+      if (mounted) SnackbarHelper.showError(context, 'Failed to scan license image: $e');
     } finally {
       if (mounted) setState(() => _isScanningLicense = false);
     }
   }
 
-  Future<void> _proceedToVerification() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_selectedBarangay == null) {
-      SnackbarHelper.showError(context, 'Please select your barangay');
+  Future<void> _detectBarangayFromAddress() async {
+    if (_extractedAddress == null || _extractedAddress!.isEmpty) {
+      print('No address to detect barangay from');
       return;
     }
+
+    try {
+      final barangayService = BarangayService();
+      List<BarangayModel> allBarangays = await barangayService.getAllBarangays();
+
+      // Fallback to static barangays if Firestore returns empty (permission issue)
+      if (allBarangays.isEmpty) {
+        print('Firestore barangays empty, using static list with proper IDs');
+        allBarangays = _getStaticBarangaysWithProperIds();
+      }
+
+      print('Total barangays loaded: ${allBarangays.length}');
+      print('Extracted address: $_extractedAddress');
+
+      if (allBarangays.isEmpty) {
+        print('No barangays available');
+        return;
+      }
+
+      // Sort by name length (longest first) to prioritize specific matches
+      // e.g., "San Nicolas Balas" should match before "San Nicolas"
+      allBarangays.sort((a, b) => b.name.length.compareTo(a.name.length));
+      
+      print('Barangays sorted by length (longest first):');
+      for (final b in allBarangays.take(5)) {
+        print('  - ${b.name} (len=${b.name.length})');
+      }
+
+      // Normalize the extracted address
+      final addressNormalized = _normalizeAddress(_extractedAddress!);
+      print('Normalized address: "$addressNormalized"');
+
+      BarangayModel? matchedBarangay;
+      double bestMatchScore = 0.0;
+      String bestMatchName = '';
+      
+      for (final barangay in allBarangays) {
+        final matchScore = _calculateBarangayMatchScore(addressNormalized, barangay);
+        
+        // Log all scores for debugging
+        if (matchScore > 0.3) {
+          print('  [${barangay.name}] score=${matchScore.toStringAsFixed(3)} (id=${barangay.id})');
+        }
+        
+        if (matchScore > bestMatchScore && matchScore >= 0.6) {
+          bestMatchScore = matchScore;
+          matchedBarangay = barangay;
+          bestMatchName = barangay.name;
+        }
+      }
+      
+      print('FINAL SELECTION: $bestMatchName (score=${bestMatchScore.toStringAsFixed(3)})');
+
+      if (mounted) {
+        setState(() {
+          _selectedBarangay = matchedBarangay;
+        });
+        
+        if (matchedBarangay != null) {
+          SnackbarHelper.showSuccess(context, 'Barangay detected: ${matchedBarangay.name}');
+        } else {
+          print('✗ No barangay matched with sufficient confidence');
+        }
+      }
+    } catch (e) {
+      print('Error detecting barangay from address: $e');
+    }
+  }
+
+  /// Normalize address for better matching
+  String _normalizeAddress(String address) {
+    return address
+        .toUpperCase()
+        .replaceAll(RegExp(r',+'), ' ')
+        .replaceAll(RegExp(r'\.+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll('CONCEPCION', '')
+        .replaceAll('TARLAC', '')
+        .replaceAll('PHILIPPINES', '')
+        .trim();
+  }
+
+  /// Calculate match score between address and barangay (0.0 to 1.0)
+  double _calculateBarangayMatchScore(String address, BarangayModel barangay) {
+    // Check for exact substring match FIRST (without variations)
+    final baseName = barangay.name.toUpperCase().trim();
+    if (_isExactPhraseMatch(address, baseName)) {
+      print('    → EXACT BASE MATCH: "$baseName"');
+      return 1.0; // Exact match gets max score, no bonus
+    }
+    
+    // Get barangay name variations for partial matching
+    final barangayNames = _getBarangayNameVariations(barangay.name);
+    double maxPartialScore = 0.0;
+    
+    for (final name in barangayNames) {
+      final score = _calculateNameMatchScore(address, name);
+      if (score > maxPartialScore) {
+        maxPartialScore = score;
+      }
+    }
+    
+    // Cap partial matches at 0.9 so exact matches always win
+    // Add small length bonus for tie-breaking
+    final cappedScore = maxPartialScore > 0.9 ? 0.9 : maxPartialScore;
+    final lengthBonus = (barangay.name.length / 100.0) * 0.05; // Smaller bonus
+    return cappedScore + lengthBonus;
+  }
+
+  /// Check if exact phrase exists in address
+  bool _isExactPhraseMatch(String address, String phrase) {
+    final addr = address.toUpperCase();
+    final phr = phrase.toUpperCase();
+    
+    if (!addr.contains(phr)) return false;
+    
+    // Find all occurrences and verify word boundaries
+    int index = 0;
+    while ((index = addr.indexOf(phr, index)) != -1) {
+      final before = index > 0 ? addr[index - 1] : ' ';
+      final afterIndex = index + phr.length;
+      final after = afterIndex < addr.length ? addr[afterIndex] : ' ';
+      
+      // Valid if preceded by space/start and followed by space/end/comma
+      if ((before == ' ' || before == ',') && 
+          (after == ' ' || after == ',' || afterIndex >= addr.length)) {
+        return true;
+      }
+      index++;
+    }
+    return false;
+  }
+
+  /// Get all possible name variations for a barangay
+  List<String> _getBarangayNameVariations(String originalName) {
+    final variations = <String>{originalName.toUpperCase()};
+    
+    // Base name without parentheses
+    var name = originalName.toUpperCase()
+        .replaceAll(RegExp(r'\s*\([^)]*\)\s*'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    
+    variations.add(name);
+    
+    // Common abbreviation mappings
+    final abbreviations = {
+      'SANTA ': ['STA. ', 'STA ', 'SANTA '],
+      'SANTO ': ['STO. ', 'STO ', 'SANTO '],
+      'SAINT ': ['ST. ', 'ST ', 'SAINT '],
+      'SAN ': ['SN. ', 'SN ', 'SAN '],
+      'BARANGAY ': ['BRGY. ', 'BRGY ', 'BRY. ', 'BRY ', 'BARANGAY '],
+    };
+    
+    // Generate variations with abbreviations
+    for (final entry in abbreviations.entries) {
+      if (name.contains(entry.key)) {
+        for (final abbrev in entry.value) {
+          variations.add(name.replaceAll(entry.key, abbrev));
+        }
+      }
+    }
+    
+    // Handle "DE" variations
+    if (name.contains(' DE ')) {
+      variations.add(name.replaceAll(' DE ', ' '));
+      variations.add(name.replaceAll(' DE ', ' DEL '));
+    }
+    
+    // Handle hyphenated vs spaced names
+    if (name.contains('-')) {
+      variations.add(name.replaceAll('-', ' '));
+    }
+    if (name.contains(' ')) {
+      variations.add(name.replaceAll(' ', '-'));
+    }
+    
+    return variations.toList();
+  }
+
+  /// Calculate match score between address and a specific name variation
+  double _calculateNameMatchScore(String address, String name) {
+    // DIRECT SUBSTRING MATCH = highest priority
+    // Check for exact match first with word boundaries
+    final nameUpper = name.toUpperCase().trim();
+    final addressUpper = address.toUpperCase().trim();
+    
+    // Check if the full name appears as a complete phrase in the address
+    if (addressUpper.contains(nameUpper)) {
+      // Verify it's not a partial word match by checking boundaries
+      final index = addressUpper.indexOf(nameUpper);
+      final before = index > 0 ? addressUpper[index - 1] : ' ';
+      final after = (index + nameUpper.length < addressUpper.length) 
+          ? addressUpper[index + nameUpper.length] 
+          : ' ';
+      
+      // Accept if preceded/followed by space, comma, or string boundary
+      final validBoundary = (before == ' ' || before == ',') && 
+                           (after == ' ' || after == ',' || after == '\n' || after == '\r');
+      
+      if (validBoundary || index == 0 || (index + nameUpper.length) >= addressUpper.length) {
+        print('    → EXACT MATCH: "$name" found in address');
+        return 1.0;
+      }
+    }
+    
+    // Check individual words
+    final nameWords = nameUpper.split(' ').where((w) => w.length > 2).toList();
+    if (nameWords.isEmpty) return 0.0;
+    
+    final addressWords = addressUpper.split(' ').where((w) => w.length > 2).toList();
+    
+    double matchedWords = 0.0;
+    int totalWeight = 0;
+    
+    for (final word in nameWords) {
+      final weight = word.length > 4 ? 2 : 1;
+      totalWeight += weight;
+      
+      // Exact word match
+      if (addressWords.contains(word)) {
+        matchedWords += weight;
+      } else {
+        // Partial word match (for typos/abbreviations)
+        for (final addrWord in addressWords) {
+          if (addrWord.length > 3 && 
+              (addrWord.startsWith(word.substring(0, (word.length * 0.7).floor())) ||
+               word.startsWith(addrWord.substring(0, (addrWord.length * 0.7).floor())))) {
+            matchedWords += (weight * 0.5);
+            break;
+          }
+        }
+      }
+    }
+    
+    final score = matchedWords / totalWeight;
+    if (score > 0.5) {
+      print('    → PARTIAL MATCH: "$name" score: ${score.toStringAsFixed(2)}');
+    }
+    return score;
+  }
+
+  /// Get static barangays with proper IDs that match Firestore (barangay_1, barangay_2, etc.)
+  List<BarangayModel> _getStaticBarangaysWithProperIds() {
+    final now = DateTime.now();
+    const baseLatitude = 15.2833;
+    const baseLongitude = 121.0167;
+
+    // Create geofence helper
+    List<List<double>> createGeofence(double lat, double lng, {double radiusDegrees = 0.01}) {
+      return [
+        [lat + radiusDegrees, lng - radiusDegrees],
+        [lat + radiusDegrees, lng + radiusDegrees],
+        [lat - radiusDegrees, lng + radiusDegrees],
+        [lat - radiusDegrees, lng - radiusDegrees],
+        [lat + radiusDegrees, lng - radiusDegrees],
+      ];
+    }
+
+    return [
+      BarangayModel(id: 'barangay_1', name: 'Alfonso', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude)),
+      BarangayModel(id: 'barangay_2', name: 'Balutu', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude)),
+      BarangayModel(id: 'barangay_3', name: 'Cafe', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude)),
+      BarangayModel(id: 'barangay_4', name: 'Calius Gueco', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude)),
+      BarangayModel(id: 'barangay_6', name: 'Caluluan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude)),
+      BarangayModel(id: 'barangay_7', name: 'Castillo', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_8', name: 'Corazon de Jesus', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_9', name: 'Culatingan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_11', name: 'Dutung-A-Matas (Jefmin)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude + 0.05)),
+      BarangayModel(id: 'barangay_12', name: 'Green Village', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.01, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.01, baseLongitude)),
+      BarangayModel(id: 'barangay_13', name: 'Lilibangan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.02, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.02, baseLongitude)),
+      BarangayModel(id: 'barangay_14', name: 'Mabilog', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.03, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.03, baseLongitude)),
+      BarangayModel(id: 'barangay_15', name: 'Magao', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.04, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.04, baseLongitude)),
+      BarangayModel(id: 'barangay_16', name: 'Malupa', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude - 0.05, longitude: baseLongitude, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude - 0.05, baseLongitude)),
+      BarangayModel(id: 'barangay_17', name: 'Minane', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.01)),
+      BarangayModel(id: 'barangay_18', name: 'Panalicsican', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.02)),
+      BarangayModel(id: 'barangay_19', name: 'Pando', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.03)),
+      BarangayModel(id: 'barangay_20', name: 'Parang', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.04)),
+      BarangayModel(id: 'barangay_21', name: 'Parulung', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude, longitude: baseLongitude - 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude, baseLongitude - 0.05)),
+      BarangayModel(id: 'barangay_22', name: 'Pitabunan', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_23', name: 'San Agustin (Murcia)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_24', name: 'San Antonio', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_25', name: 'San Bartolome', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.04, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.04, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_26', name: 'San Francisco', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.01, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.01)),
+      BarangayModel(id: 'barangay_27', name: 'San Isidro (Almendras)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_28', name: 'San Jose (Poblacion)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_29', name: 'San Juan (Castro)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_31', name: 'San Nicolas Balas', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.02, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.02)),
+      BarangayModel(id: 'barangay_32', name: 'San Nicolas (Poblacion)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_33', name: 'Sta. Cruz', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_34', name: 'Sta. Maria', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_35', name: 'Sta. Monica', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.04, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.04, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_36', name: 'Sta. Rita', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.03, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.03)),
+      BarangayModel(id: 'barangay_37', name: 'Santa Rosa', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_38', name: 'Santiago', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.02, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.02, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_39', name: 'Santo Cristo', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_40', name: 'Santo Niño', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.04, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.04, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_41', name: 'Santo Rosario (Magunting)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.04, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.04)),
+      BarangayModel(id: 'barangay_42', name: 'San Vicente (Calius/Corba)', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.01, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.01, baseLongitude + 0.05)),
+      BarangayModel(id: 'barangay_44', name: 'Talimunduc San Miguel', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.03, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.03, baseLongitude + 0.05)),
+      BarangayModel(id: 'barangay_46', name: 'Tinang', municipality: 'Concepcion', province: 'Tarlac', latitude: baseLatitude + 0.05, longitude: baseLongitude + 0.05, createdAt: now, geofenceCoordinates: createGeofence(baseLatitude + 0.05, baseLongitude + 0.05)),
+    ];
+  }
+
+  Future<void> _proceedToVerification() async {
+    if (!_formKey.currentState!.validate()) return;
 
     if (!_agreedToTerms) {
       if (mounted) {
@@ -180,12 +536,6 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
     }
 
     setState(() => _isLoading = true);
-
-    if (_selectedBarangay == null) {
-      SnackbarHelper.showError(context, 'Please select your barangay');
-      setState(() => _isLoading = false);
-      return;
-    }
 
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
@@ -262,7 +612,7 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
       }
 
       if (success) {
-        setState(() => _currentStep = DriverRegistrationStep.vehicleInfo);
+        setState(() => _currentStep = DriverRegistrationStep.licenseInfo);
       } else {
         setState(() => _verificationError = 'Invalid code. Try again.');
       }
@@ -279,6 +629,18 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
       return;
     }
 
+    // Check that license details were extracted
+    if (_extractedFullName == null || _extractedFullName!.isEmpty) {
+      SnackbarHelper.showError(context, 'Please upload and scan your driver\'s license first');
+      return;
+    }
+
+    // Check that barangay was detected
+    if (_selectedBarangay == null) {
+      SnackbarHelper.showError(context, 'Barangay could not be detected from your license address. Please ensure your license has a valid address from Concepcion, Tarlac.');
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
@@ -286,20 +648,20 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
     try {
       final authService = Provider.of<AuthService>(context, listen: false);
       final connectivityService = Provider.of<ConnectivityService>(context, listen: false);
-      
+
       // Check connectivity before proceeding
       if (!await connectivityService.checkConnectivity(context)) {
         setState(() => _isLoading = false);
         return;
       }
-      
+
       final firestoreService = FirestoreService();
-      
-      // Create auth user - skip exists check since it was already done in _proceedToVerification
+
+      // Create auth user with extracted name from license
       await authService.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text,
-        name: _nameController.text.trim(),
+        name: _extractedFullName!,
         phone: _phoneController.text.trim(),
         role: UserRole.driver,
         barangayId: _selectedBarangay!.id,
@@ -315,22 +677,38 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
         authService.currentUser!.uid, 'license', _licenseNumberImage!
       );
 
-      // Create driver profile
+      // Create driver profile with all extracted license details
       final driverModel = DriverModel(
         id: authService.currentUser!.uid,
         userId: authService.currentUser!.uid,
-        name: _nameController.text.trim(),
+        name: _extractedFullName!,
         vehicleType: 'Tricycle',
         plateNumber: _tricyclePlateController.text.trim(),
-        licenseNumber: _driverLicenseController.text.trim(),
+        licenseNumber: _extractedLicenseNumber ?? '',
         plateNumberImageUrl: plateUrl,
         licenseNumberImageUrl: licenseUrl,
         barangayId: _selectedBarangay!.id,
         barangayName: _selectedBarangay!.name,
         tricyclePlateNumber: _tricyclePlateController.text.trim(),
-        driverLicenseNumber: _driverLicenseController.text.trim(),
+        driverLicenseNumber: _extractedLicenseNumber,
         isApproved: false,
         isActive: false,
+        // License details from OCR
+        lastName: _extractedLastName,
+        firstName: _extractedFirstName,
+        middleName: _extractedMiddleName,
+        nationality: _extractedNationality,
+        sex: _extractedSex,
+        dateOfBirth: _extractedDateOfBirth,
+        weight: _extractedWeight,
+        height: _extractedHeight,
+        address: _extractedAddress,
+        expirationDate: _extractedExpirationDate,
+        agencyCode: _extractedAgencyCode,
+        bloodType: _extractedBloodType,
+        eyeColor: _extractedEyeColor,
+        dlCodes: _extractedDLCodes,
+        conditions: _extractedConditions,
       );
 
       await firestoreService.createDriverProfile(driverModel);
@@ -365,8 +743,10 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
               Navigator.pop(context);
             } else if (_currentStep == DriverRegistrationStep.verification) {
               setState(() => _currentStep = DriverRegistrationStep.userInfo);
-            } else if (_currentStep == DriverRegistrationStep.vehicleInfo) {
+            } else if (_currentStep == DriverRegistrationStep.licenseInfo) {
               setState(() => _currentStep = DriverRegistrationStep.verification);
+            } else if (_currentStep == DriverRegistrationStep.vehicleInfo) {
+              setState(() => _currentStep = DriverRegistrationStep.licenseInfo);
             } else {
               Navigator.pop(context);
             }
@@ -391,6 +771,8 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
         return _buildUserInfoStep();
       case DriverRegistrationStep.verification:
         return _buildVerificationStep();
+      case DriverRegistrationStep.licenseInfo:
+        return _buildLicenseInfoStep();
       case DriverRegistrationStep.vehicleInfo:
         return _buildVehicleInfoStep();
       case DriverRegistrationStep.complete:
@@ -437,14 +819,6 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
           const SizedBox(height: 36),
 
           _buildInputField(
-            label: 'Full Name',
-            controller: _nameController,
-            hint: 'Juan Dela Cruz',
-            icon: Icons.person_outline_rounded,
-            validator: (v) => (v == null || v.isEmpty) ? 'Name is required' : null,
-          ),
-          const SizedBox(height: 20),
-          _buildInputField(
             label: 'Email Address',
             controller: _emailController,
             hint: 'juan@driver.com',
@@ -460,21 +834,6 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
             icon: Icons.phone_android_rounded,
             keyboardType: TextInputType.phone,
             validator: (v) => (v == null || v.length < 11) ? 'Enter valid PH number' : null,
-          ),
-          const SizedBox(height: 20),
-
-          const Text(
-            'Barangay',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF1A1A1A)),
-          ),
-          const SizedBox(height: 8),
-          BarangaySelector(
-            selectedBarangay: _selectedBarangay,
-            onBarangaySelected: (barangay) {
-              setState(() {
-                _selectedBarangay = barangay;
-              });
-            },
           ),
           const SizedBox(height: 20),
 
@@ -606,6 +965,288 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
     );
   }
 
+  Widget _buildLicenseInfoStep() {
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 20),
+          const Text(
+            'Driver\'s License',
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A)),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Upload your Philippine Driver\'s License and verify the extracted details',
+            style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 30),
+
+          // License Upload Card
+          _buildImageUploadCard(
+            title: 'Driver\'s License',
+            subtitle: 'Tap to capture your license',
+            icon: Icons.badge_rounded,
+            image: _licenseNumberImage,
+            onTap: () => _pickImage(false),
+          ),
+
+          if (_isScanningLicense)
+            Padding(
+              padding: const EdgeInsets.only(top: 20),
+              child: Center(
+                child: Column(
+                  children: [
+                    const CircularProgressIndicator(color: AppTheme.primaryGreen),
+                    const SizedBox(height: 12),
+                    Text('Scanning license...', style: TextStyle(color: Colors.grey.shade600)),
+                  ],
+                ),
+              ),
+            ),
+
+          // Editable Extracted License Details
+          if (_extractedFullName != null && _extractedFullName!.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 30),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: AppTheme.primaryGreen.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.edit_note_rounded, color: AppTheme.primaryGreen),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Review & Edit Details',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.primaryGreen),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Please verify and correct if needed',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Editable Fields
+                  _buildEditableField('Last Name', (v) => _extractedLastName = v, _extractedLastName ?? ''),
+                  const SizedBox(height: 12),
+                  _buildEditableField('First Name', (v) => _extractedFirstName = v, _extractedFirstName ?? ''),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Middle Name', (v) => _extractedMiddleName = v, _extractedMiddleName ?? '', isOptional: true),
+                  const SizedBox(height: 12),
+                  _buildEditableField('License Number', (v) => _extractedLicenseNumber = v, _extractedLicenseNumber ?? ''),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Date of Birth', (v) => _extractedDateOfBirth = v, _extractedDateOfBirth ?? ''),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Expiration Date', (v) => _extractedExpirationDate = v, _extractedExpirationDate ?? ''),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Nationality', (v) => _extractedNationality = v, _extractedNationality ?? 'PHL', isOptional: true),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Sex (M/F)', (v) => _extractedSex = v, _extractedSex ?? '', isOptional: true),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Agency Code', (v) => _extractedAgencyCode = v, _extractedAgencyCode ?? '', isOptional: true),
+                  const SizedBox(height: 12),
+                  _buildEditableField('DL Codes', (v) => _extractedDLCodes = v, _extractedDLCodes ?? '', isOptional: true),
+                  const SizedBox(height: 12),
+                  _buildEditableField('Address', (v) => _extractedAddress = v, _extractedAddress ?? '', isOptional: true, isMultiline: true),
+                  const SizedBox(height: 12),
+                  // Display detected barangay
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _selectedBarangay != null ? AppTheme.primaryGreen.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _selectedBarangay != null ? AppTheme.primaryGreen.withOpacity(0.3) : Colors.orange.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_city,
+                              color: _selectedBarangay != null ? AppTheme.primaryGreen : Colors.orange,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Detected Barangay',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _selectedBarangay?.name ?? 'No barangay detected from address',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: _selectedBarangay != null ? const Color(0xFF1A1A1A) : Colors.orange,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_selectedBarangay != null)
+                              const Icon(Icons.check_circle, color: AppTheme.primaryGreen, size: 20),
+                          ],
+                        ),
+                        // Show manual selector button when no barangay detected
+                        if (_selectedBarangay == null) ...[
+                          const SizedBox(height: 12),
+                          const Divider(height: 1),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                final result = await showDialog<BarangayModel>(
+                                  context: context,
+                                  builder: (context) => const _BarangaySelectorDialog(),
+                                );
+                                if (result != null && mounted) {
+                                  setState(() {
+                                    _selectedBarangay = result;
+                                  });
+                                  SnackbarHelper.showSuccess(context, 'Barangay selected: ${result.name}');
+                                }
+                              },
+                              icon: const Icon(Icons.location_on_outlined, size: 18),
+                              label: const Text('Select Barangay Manually'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.orange.shade800,
+                                side: BorderSide(color: Colors.orange.shade300),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          const SizedBox(height: 40),
+
+          ElevatedButton(
+            onPressed: (_licenseNumberImage == null || _isScanningLicense) ? null : () {
+              if (_extractedFirstName == null || _extractedFirstName!.isEmpty ||
+                  _extractedLastName == null || _extractedLastName!.isEmpty) {
+                SnackbarHelper.showError(context, 'Please enter your name to continue');
+                return;
+              }
+              if (_extractedLicenseNumber == null || _extractedLicenseNumber!.isEmpty) {
+                SnackbarHelper.showError(context, 'Please enter your license number to continue');
+                return;
+              }
+              if (_selectedBarangay == null) {
+                SnackbarHelper.showError(context, 'Barangay could not be detected from address. Please check your license address.');
+                return;
+              }
+              // Update full name from edited fields
+              _extractedFullName = '$_extractedLastName, $_extractedFirstName ${_extractedMiddleName ?? ''}'.trim();
+              setState(() => _currentStep = DriverRegistrationStep.vehicleInfo);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryGreen,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 64),
+              shape: const StadiumBorder(),
+              elevation: 8,
+              shadowColor: AppTheme.primaryGreen.withOpacity(0.3),
+            ),
+            child: const Text('Continue', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+          ),
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEditableField(String label, Function(String) onChanged, String initialValue, {bool isOptional = false, bool isMultiline = false}) {
+    final controller = TextEditingController(text: initialValue);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label + (isOptional ? ' (Optional)' : ' *'),
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isOptional ? Colors.grey.shade500 : const Color(0xFF1A1A1A)),
+        ),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          onChanged: onChanged,
+          maxLines: isMultiline ? 2 : 1,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          decoration: InputDecoration(
+            hintText: 'Enter $label',
+            hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
+            filled: true,
+            fillColor: Colors.grey.shade50,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade200),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppTheme.primaryGreen, width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+          validator: isOptional ? null : (v) => (v == null || v.isEmpty) ? 'Required' : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool isMultiline = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A)),
+              maxLines: isMultiline ? 3 : 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildVehicleInfoStep() {
     return Form(
       key: _formKey,
@@ -622,7 +1263,7 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
             'Upload your documents for validation',
             style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 32),
 
           _buildImageUploadCard(
             title: 'Tricycle Plate',
@@ -630,14 +1271,6 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
             icon: Icons.confirmation_number_rounded,
             image: _plateNumberImage,
             onTap: () => _pickImage(true),
-          ),
-          const SizedBox(height: 20),
-          _buildImageUploadCard(
-            title: 'Driver\'s License',
-            subtitle: 'Capture your valid license',
-            icon: Icons.badge_rounded,
-            image: _licenseNumberImage,
-            onTap: () => _pickImage(false),
           ),
 
           const SizedBox(height: 32),
@@ -649,14 +1282,41 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
             icon: Icons.confirmation_number_rounded,
             validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
           ),
-          const SizedBox(height: 20),
-          _buildInputField(
-            label: 'License Number',
-            controller: _driverLicenseController,
-            hint: 'D12-34-567890',
-            icon: Icons.badge_rounded,
-            validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-          ),
+
+          if (_extractedLicenseNumber != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 20),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.badge_outlined, color: Colors.grey.shade400),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'License Number (Auto-detected)',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                          ),
+                          Text(
+                            _extractedLicenseNumber!,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.check_circle, color: AppTheme.primaryGreen, size: 20),
+                  ],
+                ),
+              ),
+            ),
 
           const SizedBox(height: 40),
 
@@ -730,7 +1390,7 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
         ),
         const SizedBox(height: 16),
         Text(
-          'Thank you, ${_nameController.text}!\nYour application is now being reviewed.',
+          'Thank you, ${_extractedFullName ?? 'Driver'}!\nYour application is now being reviewed.',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 16, color: Colors.grey.shade600, height: 1.6),
         ),
@@ -888,18 +1548,18 @@ class _DriverRegisterScreenWithVerificationState extends State<DriverRegisterScr
   }
 }
 
-class _BarangayPicker extends StatefulWidget {
+class _BarangaySelectorDialog extends StatefulWidget {
+  const _BarangaySelectorDialog({Key? key}) : super(key: key);
+
   @override
-  State<_BarangayPicker> createState() => _BarangayPickerState();
+  State<_BarangaySelectorDialog> createState() => _BarangaySelectorDialogState();
 }
 
-class _BarangayPickerState extends State<_BarangayPicker> {
-  final FirestoreService _firestoreService = FirestoreService();
+class _BarangaySelectorDialogState extends State<_BarangaySelectorDialog> {
   final TextEditingController _searchController = TextEditingController();
   List<BarangayModel> _barangays = [];
   List<BarangayModel> _filteredBarangays = [];
   bool _isLoading = true;
-  String? _error;
   String _searchQuery = '';
 
   @override
@@ -916,22 +1576,79 @@ class _BarangayPickerState extends State<_BarangayPicker> {
 
   Future<void> _loadBarangays() async {
     try {
-      final data = await _firestoreService.getAllBarangays();
+      // Try Firestore first
+      final barangayService = BarangayService();
+      var barangays = await barangayService.getAllBarangays();
+      
+      // Fallback to static if Firestore is empty
+      if (barangays.isEmpty) {
+        barangays = _getStaticBarangaysForSelector();
+      }
+      
       if (mounted) {
         setState(() {
-          _barangays = data.where((b) => b.isActive).toList();
+          _barangays = barangays.where((b) => b.isActive).toList();
           _filteredBarangays = _barangays;
           _isLoading = false;
         });
       }
     } catch (e) {
+      // On error, use static fallback
       if (mounted) {
         setState(() {
-          _error = 'Failed to load barangays';
+          _barangays = _getStaticBarangaysForSelector();
+          _filteredBarangays = _barangays;
           _isLoading = false;
         });
       }
     }
+  }
+
+  List<BarangayModel> _getStaticBarangaysForSelector() {
+    final now = DateTime.now();
+    return [
+      BarangayModel(id: 'barangay_1', name: 'Alfonso', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_2', name: 'Balutu', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_3', name: 'Cafe', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_4', name: 'Calius Gueco', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_6', name: 'Caluluan', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_7', name: 'Castillo', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_8', name: 'Corazon de Jesus', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_9', name: 'Culatingan', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_11', name: 'Dutung-A-Matas (Jefmin)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_12', name: 'Green Village', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_13', name: 'Lilibangan', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_14', name: 'Mabilog', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_15', name: 'Magao', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_16', name: 'Malupa', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_17', name: 'Minane', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_18', name: 'Panalicsican', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_19', name: 'Pando', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_20', name: 'Parang', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_21', name: 'Parulung', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_22', name: 'Pitabunan', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_23', name: 'San Agustin (Murcia)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_24', name: 'San Antonio', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_25', name: 'San Bartolome', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_26', name: 'San Francisco', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_27', name: 'San Isidro (Almendras)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_28', name: 'San Jose (Poblacion)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_29', name: 'San Juan (Castro)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_31', name: 'San Nicolas Balas', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_32', name: 'San Nicolas (Poblacion)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_33', name: 'Sta. Cruz', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_34', name: 'Sta. Maria', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_35', name: 'Sta. Monica', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_36', name: 'Sta. Rita', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_37', name: 'Santa Rosa', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_38', name: 'Santiago', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_39', name: 'Santo Cristo', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_40', name: 'Santo Niño', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_41', name: 'Santo Rosario (Magunting)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_42', name: 'San Vicente (Calius/Corba)', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_44', name: 'Talimunduc San Miguel', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+      BarangayModel(id: 'barangay_46', name: 'Tinang', municipality: 'Concepcion', province: 'Tarlac', isActive: true, createdAt: now),
+    ];
   }
 
   void _filterBarangays(String query) {
@@ -955,8 +1672,13 @@ class _BarangayPickerState extends State<_BarangayPicker> {
         child: Column(
           children: [
             const Text(
-              'Select Barangay',
+              'Select Your Barangay',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Choose the barangay where you live',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
             ),
             const SizedBox(height: 20),
             TextField(
@@ -1003,7 +1725,7 @@ class _BarangayPickerState extends State<_BarangayPicker> {
                           Icon(Icons.search_off_rounded, size: 48, color: Colors.grey.shade300),
                           const SizedBox(height: 16),
                           Text(
-                            _searchQuery.isEmpty ? (_error ?? 'No active barangays found') : 'No results found for "$_searchQuery"',
+                            _searchQuery.isEmpty ? 'No barangays found' : 'No results for "$_searchQuery"',
                             style: TextStyle(color: Colors.grey.shade500),
                             textAlign: TextAlign.center,
                           ),
@@ -1015,8 +1737,17 @@ class _BarangayPickerState extends State<_BarangayPicker> {
                       itemBuilder: (context, index) {
                         final b = _filteredBarangays[index];
                         return ListTile(
+                          leading: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryGreen.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.location_on, color: AppTheme.primaryGreen, size: 20),
+                          ),
                           title: Text(b.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          subtitle: Text(b.municipality),
+                          subtitle: Text('${b.municipality}, ${b.province}', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
                           onTap: () => Navigator.pop(context, b),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         );
