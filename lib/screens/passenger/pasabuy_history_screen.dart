@@ -6,6 +6,7 @@ import '../../services/firestore_service.dart';
 import '../../services/fare_service.dart';
 import '../../models/pasabuy_model.dart';
 import '../../utils/app_theme.dart';
+import '../../widgets/driver_rating_dialog.dart';
 
 class PasaBuyHistoryScreen extends StatelessWidget {
   const PasaBuyHistoryScreen({super.key});
@@ -16,153 +17,152 @@ class PasaBuyHistoryScreen extends StatelessWidget {
     final firestoreService = Provider.of<FirestoreService>(context);
 
     if (authService.currentUser == null) {
-      return const Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(child: Text('Please log in to view pasabuy history', style: TextStyle(fontWeight: FontWeight.w900))),
+      return const Center(
+        child: Text('Please log in to view pasabuy history',
+            style: TextStyle(fontWeight: FontWeight.w900)),
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: StreamBuilder<List<PasaBuyModel>>(
-        stream: firestoreService.getPassengerPasaBuyRequests(authService.currentUser!.uid),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: AppTheme.primaryGreen));
-          }
+    return StreamBuilder<List<PasaBuyModel>>(
+      stream: firestoreService.getPassengerPasaBuyRequests(authService.currentUser!.uid),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: AppTheme.primaryGreen));
+        }
 
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: const BoxDecoration(color: Color(0xFFFFF1F1), shape: BoxShape.circle),
+                    child: const Icon(Icons.error_outline_rounded, size: 64, color: Colors.red),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text('Oops!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
+                  const SizedBox(height: 12),
+                  Text('We couldn\'t load your history. ${snapshot.error}', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => (context as Element).markNeedsBuild(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryGreen,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: const StadiumBorder(),
+                      ),
+                      child: const Text('Try Again', style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final requests = snapshot.data ?? [];
+        final completedRequests = requests.where((req) => req.status == PasaBuyStatus.completed).toList();
+
+        if (completedRequests.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.shopping_bag_rounded, size: 100, color: Colors.grey.shade100),
+                const SizedBox(height: 20),
+                const Text(
+                  'No PasaBuy History',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A), letterSpacing: -0.5),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Complete your first pasabuy request to see history',
+                  style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final double totalSpent = completedRequests.fold(0, (sum, req) => sum + req.fare);
+        final int totalRequests = completedRequests.length;
+
+        return CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Container(
+                padding: const EdgeInsets.only(top: 60, left: 28, right: 28, bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(32),
+                    bottomRight: Radius.circular(32),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(color: Color(0xFFFFF1F1), shape: BoxShape.circle),
-                      child: const Icon(Icons.error_outline_rounded, size: 64, color: Colors.red),
+                    const Text(
+                      'Total Activity',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A), letterSpacing: -0.5),
                     ),
                     const SizedBox(height: 24),
-                    const Text('Oops!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
-                    const SizedBox(height: 12),
-                    Text('We couldn\'t load your history. ${snapshot.error}', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
-                    const SizedBox(height: 32),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => (context as Element).markNeedsBuild(),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primaryGreen,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 18),
-                          shape: const StadiumBorder(),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _StatCard(
+                            title: 'Requests Done',
+                            value: totalRequests.toString(),
+                            icon: Icons.shopping_bag_rounded,
+                            color: Color(0xFFFF9800),
+                          ),
                         ),
-                        child: const Text('Try Again', style: TextStyle(fontWeight: FontWeight.w900)),
-                      ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _StatCard(
+                            title: 'Total Spent',
+                            value: FareService.formatFare(totalSpent),
+                            icon: Icons.account_balance_wallet_rounded,
+                            color: AppTheme.primaryGreen,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-            );
-          }
-
-          final requests = snapshot.data ?? [];
-          final completedRequests = requests.where((req) => req.status == PasaBuyStatus.completed).toList();
-
-          if (completedRequests.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.shopping_bag_rounded, size: 100, color: Colors.grey.shade100),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'No PasaBuy History',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A), letterSpacing: -0.5),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Complete your first pasabuy request to see history',
-                    style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          double totalSpent = completedRequests.fold(0, (sum, req) => sum + req.fare);
-          int totalRequests = completedRequests.length;
-
-          return CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(
-                  padding: const EdgeInsets.only(top: 60, left: 28, right: 28, bottom: 20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(32),
-                      bottomRight: Radius.circular(32),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Total Activity',
-                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A), letterSpacing: -0.5),
-                      ),
-                      const SizedBox(height: 24),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _StatCard(
-                              title: 'Requests Done',
-                              value: totalRequests.toString(),
-                              icon: Icons.shopping_bag_rounded,
-                              color: Color(0xFFFF9800),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _StatCard(
-                              title: 'Total Spent',
-                              value: FareService.formatFare(totalSpent),
-                              icon: Icons.account_balance_wallet_rounded,
-                              color: AppTheme.primaryGreen,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 40),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final request = completedRequests[index];
+                    return _PasaBuyHistoryCard(request: request);
+                  },
+                  childCount: completedRequests.length,
                 ),
               ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(24, 32, 24, 40),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final request = completedRequests[index];
-                      return _PasaBuyHistoryCard(request: request);
-                    },
-                    childCount: completedRequests.length,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -269,7 +269,48 @@ class _PasaBuyHistoryCard extends StatelessWidget {
                   padding: EdgeInsets.symmetric(vertical: 16),
                   child: Divider(height: 1),
                 ),
-                _DetailItem(label: 'TIME', value: DateFormat('hh:mm a').format(request.completedAt ?? request.createdAt)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _DetailItem(label: 'TIME', value: DateFormat('hh:mm a').format(request.completedAt ?? request.createdAt)),
+                    if (request.isRated)
+                      Row(
+                        children: [
+                          const Icon(Icons.star_rounded, color: Colors.amber, size: 20),
+                          const SizedBox(width: 4),
+                          Text(
+                            request.rating?.toStringAsFixed(1) ?? '5.0',
+                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                          ),
+                        ],
+                      )
+                    else if (request.driverId != null) // Ensure there's a driver to rate
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.star_border_rounded, size: 16),
+                        label: const Text('Rate Driver', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.amber.shade700,
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          side: BorderSide(color: Colors.amber.shade700, width: 1.5),
+                          shape: const StadiumBorder(),
+                        ),
+                        onPressed: () {
+                          final authService = Provider.of<AuthService>(context, listen: false);
+                          showDialog(
+                            context: context,
+                            builder: (context) => DriverRatingDialog(
+                              rideId: request.id,
+                              driverId: request.driverId!,
+                              passengerId: authService.currentUser!.uid,
+                              passengerName: authService.currentUserModel?.name ?? 'Passenger',
+                              isPasabuy: true,
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 Container(
                   width: double.infinity,
@@ -293,7 +334,7 @@ class _PasaBuyHistoryCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        request.itemDescription,
+                        '${request.itemDescription} (Qty: ${request.itemQuantity})',
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,

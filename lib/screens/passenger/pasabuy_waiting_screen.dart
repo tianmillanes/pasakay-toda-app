@@ -1445,7 +1445,7 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
                       children: [
                         const Icon(Icons.check_circle_outline, size: 16, color: Colors.green),
                         const SizedBox(width: 8),
-                        Expanded(child: Text(request.itemDescription, style: const TextStyle(fontSize: 14))),
+                        Expanded(child: Text('${request.itemDescription} (Qty: ${request.itemQuantity})', style: const TextStyle(fontSize: 14))),
                       ],
                     ),
                   ),

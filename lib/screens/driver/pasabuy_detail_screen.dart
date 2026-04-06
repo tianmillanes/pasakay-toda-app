@@ -258,7 +258,7 @@ class _PasaBuyDetailScreenState extends State<PasaBuyDetailScreen> {
                       border: Border.all(color: Colors.grey.shade100, width: 1.5),
                     ),
                     child: Text(
-                      _currentRequest.itemDescription,
+                      '${_currentRequest.itemDescription} (Qty: ${_currentRequest.itemQuantity})',
                       style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A1A), fontWeight: FontWeight.w600, height: 1.5),
                     ),
                   ),

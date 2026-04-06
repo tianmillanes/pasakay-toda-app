@@ -24,10 +24,13 @@ class PasaBuyScreen extends StatefulWidget {
 class _PasaBuyScreenState extends State<PasaBuyScreen> {
   LatLng? _pickupLocation;
   LatLng? _dropoffLocation;
+  LatLng? _storeLocation; // Store to buy from when sameLocation is true
   LatLng? _currentLocation; // Passenger's current GPS location
   String _pickupAddress = '';
   String _dropoffAddress = '';
+  String _storeAddress = '';
   String _itemDescription = '';
+  String _itemQuantity = '1';
   double? _fare;
   double? _distance;
   int? _duration;
@@ -39,8 +42,10 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
   // final Set<Marker> _markers = {}; // No longer used for UI display
 
   final _itemController = TextEditingController();
+  final _quantityController = TextEditingController(text: '1');
   final _pickupController = TextEditingController();
   final _dropoffController = TextEditingController();
+  final _storeController = TextEditingController();
   
   @override
   void initState() {
@@ -51,22 +56,25 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
   @override
   void dispose() {
     _itemController.dispose();
+    _quantityController.dispose();
     _pickupController.dispose();
     _dropoffController.dispose();
+    _storeController.dispose();
     super.dispose();
   }
 
   Future<void> _calculateFareAndETA() async {
-    final finalDropoff = _sameLocation ? _pickupLocation : _dropoffLocation;
-    if (_pickupLocation == null || finalDropoff == null) return;
+    final actualOrigin = _sameLocation ? (_storeLocation ?? _pickupLocation) : _pickupLocation;
+    final actualDest = _sameLocation ? _pickupLocation : _dropoffLocation;
+    if (actualOrigin == null || actualDest == null) return;
     
     setState(() => _isLoadingFare = true);
     try {
       final result = await FareService.calculateFareAndETA(
-        pickupLat: _pickupLocation!.latitude,
-        pickupLng: _pickupLocation!.longitude,
-        dropoffLat: finalDropoff.latitude,
-        dropoffLng: finalDropoff.longitude,
+        pickupLat: actualOrigin.latitude,
+        pickupLng: actualOrigin.longitude,
+        dropoffLat: actualDest.latitude,
+        dropoffLng: actualDest.longitude,
         isPasabuy: true,
       );
       
@@ -122,13 +130,13 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
     }
   }
 
-  Future<void> _openMapPicker(bool isForPickup) async {
+  Future<void> _openMapPicker(String type) async {
     final result = await Navigator.push<Map<String, dynamic>>(
       context,
       MaterialPageRoute(
         builder: (context) => MapPickerScreen(
-          isForPickup: isForPickup,
-          initialLocation: (isForPickup ? _pickupLocation : _dropoffLocation) ?? _currentLocation,
+          isForPickup: type == 'pickup' || type == 'store',
+          initialLocation: (type == 'pickup' ? _pickupLocation : (type == 'store' ? _storeLocation : _dropoffLocation)) ?? _currentLocation,
         ),
       ),
     );
@@ -136,10 +144,14 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
       final address = result['address'] as String;
       final location = result['location'] as LatLng;
       setState(() {
-        if (isForPickup) {
+        if (type == 'pickup') {
           _pickupController.text = address;
           _pickupAddress = address;
           _pickupLocation = location;
+        } else if (type == 'store') {
+          _storeController.text = address;
+          _storeAddress = address;
+          _storeLocation = location;
         } else {
           _dropoffController.text = address;
           _dropoffAddress = address;
@@ -152,8 +164,16 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
 
   Future<void> _submitPasaBuyRequest() async {
     // Validation
+    final actualOrigin = _sameLocation ? (_storeLocation ?? _pickupLocation) : _pickupLocation;
+    final actualDest = _sameLocation ? _pickupLocation : _dropoffLocation;
+
     if (_pickupLocation == null) {
       SnackbarHelper.showError(context, 'Please select a pickup location');
+      return;
+    }
+
+    if (!_sameLocation && _dropoffLocation == null) {
+      SnackbarHelper.showError(context, 'Select delivery location');
       return;
     }
 
@@ -162,14 +182,13 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
       return;
     }
 
-    if (_fare == null || _fare! <= 0) {
-      SnackbarHelper.showError(context, 'Calculating fare...');
+    if (_itemQuantity.trim().isEmpty) {
+      SnackbarHelper.showError(context, 'Please specify quantity');
       return;
     }
 
-    LatLng finalDropoff = _sameLocation ? _pickupLocation! : _dropoffLocation!;
-    if (!_sameLocation && _dropoffLocation == null) {
-      SnackbarHelper.showError(context, 'Select delivery location');
+    if (_fare == null || _fare! <= 0) {
+      SnackbarHelper.showError(context, 'Calculating fare...');
       return;
     }
 
@@ -187,11 +206,12 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
         authService.currentUser!.uid,
         authService.currentUserModel?.name ?? 'Passenger',
         authService.currentUserModel?.phone ?? '',
-        GeoPoint(_pickupLocation!.latitude, _pickupLocation!.longitude),
-        _pickupAddress,
-        GeoPoint(finalDropoff.latitude, finalDropoff.longitude),
+        GeoPoint(actualOrigin!.latitude, actualOrigin.longitude),
+        _sameLocation ? (_storeAddress.isNotEmpty ? _storeAddress : _pickupAddress) : _pickupAddress,
+        GeoPoint(actualDest!.latitude, actualDest.longitude),
         _sameLocation ? _pickupAddress : _dropoffAddress,
         _itemDescription,
+        _itemQuantity,
         _fare!,
         authService.currentUserModel?.barangayId ?? '',
         authService.currentUserModel?.barangayName ?? '',
@@ -217,11 +237,12 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
               passengerId: authService.currentUser!.uid,
               passengerName: authService.currentUserModel?.name ?? 'Passenger',
               passengerPhone: authService.currentUserModel?.phone ?? '',
-              pickupLocation: GeoPoint(_pickupLocation!.latitude, _pickupLocation!.longitude),
-              pickupAddress: _pickupAddress,
-              dropoffLocation: GeoPoint(finalDropoff.latitude, finalDropoff.longitude),
+              pickupLocation: GeoPoint(actualOrigin!.latitude, actualOrigin.longitude),
+              pickupAddress: _sameLocation ? (_storeAddress.isNotEmpty ? _storeAddress : _pickupAddress) : _pickupAddress,
+              dropoffLocation: GeoPoint(actualDest!.latitude, actualDest.longitude),
               dropoffAddress: _sameLocation ? _pickupAddress : _dropoffAddress,
               itemDescription: _itemDescription,
+              itemQuantity: _itemQuantity,
               fare: _fare!,
               status: PasaBuyStatus.pending,
               assignedDriverId: result['assignedDriverId'] as String?,
@@ -233,7 +254,7 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
               barangayId: authService.currentUserModel?.barangayId ?? '',
               barangayName: authService.currentUserModel?.barangayName ?? '',
               declinedBy: [],
-              expiresAt: DateTime.now().add(const Duration(seconds: 30)),
+              expiresAt: DateTime.now().add(const Duration(minutes: 3)),
             );
 
             Navigator.of(context).pushReplacement(
@@ -413,17 +434,27 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
             placeholder: 'Where to pick up?',
             icon: Icons.location_on_rounded,
             iconColor: Colors.orange,
-            onTap: () => _openMapPicker(true),
-            showLine: !_sameLocation,
+            onTap: () => _openMapPicker("pickup"),
+            showLine: true,
           ),
           if (!_sameLocation)
             _buildCompactLocationRow(
               label: 'Delivery Location',
               value: _dropoffAddress,
               placeholder: 'Where to deliver?',
-              icon: Icons.location_on_rounded,
+              icon: Icons.home_rounded,
               iconColor: AppTheme.primaryGreen,
-              onTap: () => _openMapPicker(false),
+              onTap: () => _openMapPicker("dropoff"),
+              isLast: true,
+            ),
+          if (_sameLocation)
+            _buildCompactLocationRow(
+              label: 'Store Location',
+              value: _storeAddress,
+              placeholder: 'Where to buy from? (Optional)',
+              icon: Icons.storefront_rounded,
+              iconColor: Colors.orangeAccent,
+              onTap: () => _openMapPicker("store"),
               isLast: true,
             ),
           const Divider(height: 1, color: AppTheme.borderLight, indent: 56),
@@ -709,6 +740,38 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
                     fontSize: 11,
                     fontStyle: FontStyle.italic,
                     color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppTheme.borderLight, indent: 56),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.numbers_rounded, color: AppTheme.primaryGreen, size: 20),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextField(
+                    controller: _quantityController,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: 'Quantity (e.g., 2kg, 5 pcs)',
+                      hintStyle: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textHint,
+                      ),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onChanged: (val) => _itemQuantity = val,
                   ),
                 ),
               ],

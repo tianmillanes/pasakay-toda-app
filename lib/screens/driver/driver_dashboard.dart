@@ -2040,7 +2040,7 @@ class _HomeTabState extends State<_HomeTab> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        request.itemDescription,
+                        '${request.itemDescription} (Qty: ${request.itemQuantity})',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.grey.shade800,
@@ -2804,6 +2804,40 @@ class _ProfileTab extends StatefulWidget {
 class _ProfileTabState extends State<_ProfileTab> {
   String? _userPhotoUrl;
   StreamSubscription? _photoUrlSub;
+  Future<Map<String, dynamic>>? _ratingFuture;
+  StreamSubscription? _ridesSub;
+  StreamSubscription? _pasabuySub;
+  double _todayEarnings = 0.0;
+  int _todayTripsCount = 0;
+  List<RideModel> _todayRides = [];
+  List<PasaBuyModel> _todayPasaBuys = [];
+
+  void _calculateTodayStats() {
+    final now = DateTime.now();
+    double earnings = 0.0;
+    int tripsCount = 0;
+
+    for (var ride in _todayRides) {
+      if (ride.status == RideStatus.completed && ride.completedAt != null && ride.completedAt!.year == now.year && ride.completedAt!.month == now.month && ride.completedAt!.day == now.day) {
+        earnings += ride.fare;
+        tripsCount++;
+      }
+    }
+
+    for (var pb in _todayPasaBuys) {
+      if (pb.status == PasaBuyStatus.completed && pb.completedAt != null && pb.completedAt!.year == now.year && pb.completedAt!.month == now.month && pb.completedAt!.day == now.day) {
+        earnings += pb.fare;
+        tripsCount++;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _todayEarnings = earnings;
+        _todayTripsCount = tripsCount;
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -2812,11 +2846,23 @@ class _ProfileTabState extends State<_ProfileTab> {
     final firestoreService = Provider.of<FirestoreService>(context, listen: false);
     final userId = authService.currentUser?.uid;
     if (userId != null) {
+      _ratingFuture = firestoreService.getDriverAggregateRating(userId);
+
       firestoreService.getUserProfile(userId).then((userData) {
         if (!mounted || userData == null) return;
         setState(() {
           _userPhotoUrl = userData['photoUrl'] as String?;
         });
+      });
+
+      _ridesSub = firestoreService.getUserRides(userId, isDriver: true).listen((rides) {
+        _todayRides = rides;
+        _calculateTodayStats();
+      });
+
+      _pasabuySub = firestoreService.getDriverPasaBuyRequests(userId).listen((requests) {
+        _todayPasaBuys = requests;
+        _calculateTodayStats();
       });
 
       // Listen to real-time photoUrl changes
@@ -2843,6 +2889,8 @@ class _ProfileTabState extends State<_ProfileTab> {
   @override
   void dispose() {
     _photoUrlSub?.cancel();
+    _ridesSub?.cancel();
+    _pasabuySub?.cancel();
     super.dispose();
   }
 
@@ -2939,6 +2987,54 @@ class _ProfileTabState extends State<_ProfileTab> {
                                     ],
                                   ),
                                 ),
+                                const SizedBox(width: 8),
+                                if (_ratingFuture != null)
+                                  FutureBuilder<Map<String, dynamic>>(
+                                    future: _ratingFuture,
+                                    builder: (context, snapshot) {
+                                      if (!snapshot.hasData) return const SizedBox.shrink();
+                                      final double rating = snapshot.data!['averageRating'] ?? 0.0;
+                                      final int total = snapshot.data!['totalRatings'] ?? 0;
+                                      
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(20),
+                                          border: Border.all(
+                                            color: Colors.amber.withOpacity(0.3),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.star_rounded, color: Colors.amber, size: 16),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              rating > 0 ? rating.toStringAsFixed(1) : 'New',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.amber.shade700,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                            if (total > 0) ...[
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                '($total)',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Colors.amber.shade700,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
                               ],
                             ),
                             const SizedBox(height: 8),
@@ -2994,7 +3090,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '0',
+                                '$_todayTripsCount',
                                 style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w800,
@@ -3022,7 +3118,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '₱0.00',
+                                FareService.formatFare(_todayEarnings),
                                 style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w800,

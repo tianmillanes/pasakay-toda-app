@@ -1034,7 +1034,7 @@ class _PassengerDashboardState extends State<PassengerDashboard> {
             driverId: _activePasaBuy!.driverId,
             acceptedAt: _activePasaBuy!.acceptedAt,
             isPasaBuy: true,
-            itemDescription: _activePasaBuy!.itemDescription,
+            itemDescription: '${_activePasaBuy!.itemDescription} (Qty: ${_activePasaBuy!.itemQuantity})',
             barangayId: _activePasaBuy!.barangayId,
             barangayName: _activePasaBuy!.barangayName,
           ),

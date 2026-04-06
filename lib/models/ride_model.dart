@@ -35,6 +35,8 @@ class RideModel {
   final bool isPasaBuy;
   final String? itemDescription;
   final DateTime? expiresAt;
+  final bool isRated;
+  final double? rating;
 
   RideModel({
     required this.id,
@@ -60,6 +62,8 @@ class RideModel {
     this.isPasaBuy = false,
     this.itemDescription,
     this.expiresAt,
+    this.isRated = false,
+    this.rating,
   });
 
   factory RideModel.fromFirestore(DocumentSnapshot doc) {
@@ -116,6 +120,8 @@ class RideModel {
       expiresAt: data['expiresAt'] != null
           ? (data['expiresAt'] as Timestamp).toDate()
           : null,
+      isRated: data['isRated'] ?? false,
+      rating: data['rating'] != null ? (data['rating'] as num).toDouble() : null,
     );
   }
 
@@ -181,6 +187,8 @@ class RideModel {
       'isPasaBuy': isPasaBuy,
       'itemDescription': itemDescription,
       'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
+      'isRated': isRated,
+      'rating': rating,
     };
   }
 
@@ -194,6 +202,8 @@ class RideModel {
     bool? isPasaBuy,
     String? itemDescription,
     DateTime? expiresAt,
+    bool? isRated,
+    double? rating,
   }) {
     return RideModel(
       id: id,

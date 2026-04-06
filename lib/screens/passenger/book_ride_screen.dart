@@ -886,32 +886,27 @@ class _BookRideScreenState extends State<BookRideScreen> {
   }
 
   Widget _buildEmptyState() {
-    return Column(
-      children: [
-        const SizedBox(height: 24),
-        // Empty State Message
-        Expanded(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.directions_car_filled_outlined, 
-                     size: 64, 
-                     color: Colors.grey.shade300),
-                const SizedBox(height: 16),
-                Text(
-                  'Where to?',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade400,
-                  ),
-                ),
-              ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 60),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.directions_car_filled_outlined,
+                size: 64,
+                color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            Text(
+              'Where to?',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey.shade400,
+              ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 

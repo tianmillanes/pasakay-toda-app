@@ -1611,6 +1611,75 @@ class FirestoreService extends ChangeNotifier {
         });
   }
 
+  // ============ DRIVER RATINGS ============
+
+  /// Allows a passenger to rate a completed ride
+  Future<void> submitDriverRating({
+    required String rideId,
+    required String driverId,
+    required String passengerId,
+    required String passengerName,
+    required double rating,
+    required String feedback,
+    required bool isPasabuy,
+  }) async {
+    try {
+      // 1. Create the review doc
+      await _firestore.collection('driver_reviews').add({
+        'driverId': driverId,
+        'passengerId': passengerId,
+        'passengerName': passengerName,
+        'rideId': rideId,
+        'rating': rating,
+        'feedback': feedback,
+        'isPasabuy': isPasabuy,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 2. Mark ride as rated
+      final rideRef = isPasabuy ? _firestore.collection('pasabuy_requests').doc(rideId) : _firestore.collection('rides').doc(rideId);
+      await rideRef.update({'isRated': true, 'rating': rating});
+      
+      print('✅ Driver rating submitted successfully');
+    } catch (e) {
+      print('❌ Error submitting rating: $e');
+      rethrow;
+    }
+  }
+
+  /// Gets the aggregate rating for a driver
+  Future<Map<String, dynamic>> getDriverAggregateRating(String driverId) async {
+    try {
+      final query = _firestore.collection('driver_reviews').where('driverId', isEqualTo: driverId);
+      final aggregateQuery = query.aggregate(
+        average('rating'),
+        count(),
+      );
+      final snapshot = await aggregateQuery.get();
+      
+      return {
+        'averageRating': snapshot.getAverage('rating') ?? 0.0,
+        'totalRatings': snapshot.count ?? 0,
+      };
+    } catch (e) {
+      print('Error calculating aggregate rating: $e');
+      return {
+        'averageRating': 0.0,
+        'totalRatings': 0,
+      };
+    }
+  }
+
+  /// Get the list of reviews for a driver
+  Stream<List<Map<String, dynamic>>> getDriverReviews(String driverId) {
+    return _firestore
+        .collection('driver_reviews')
+        .where('driverId', isEqualTo: driverId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList());
+  }
+
   /// Check if a ride can be cancelled by passenger
   Future<bool> canCancelRide(String rideId) async {
     try {
@@ -3338,6 +3407,7 @@ class FirestoreService extends ChangeNotifier {
     GeoPoint dropoffLocation,
     String dropoffAddress,
     String itemDescription,
+    String itemQuantity,
     double fare,
     String barangayId,
     String barangayName,
@@ -3424,6 +3494,7 @@ class FirestoreService extends ChangeNotifier {
         'dropoffLocation': dropoffLocation,
         'dropoffAddress': dropoffAddress,
         'itemDescription': itemDescription,
+        'itemQuantity': itemQuantity,
         'fare': fare,
         'status': 'pending',
         'assignedDriverId': null,
@@ -3433,7 +3504,7 @@ class FirestoreService extends ChangeNotifier {
         'createdAt': FieldValue.serverTimestamp(),
         'acceptedAt': null,
         'completedAt': null,
-        'expiresAt': Timestamp.fromDate(DateTime.now().add(const Duration(seconds: 30))),
+        'expiresAt': Timestamp.fromDate(DateTime.now().add(const Duration(minutes: 3))),
         'barangayId': passengerBarangayId,
         'barangayName': passengerBarangayName,
         'canBeCancelled': true, // Allow cancellation until driver accepts

@@ -224,7 +224,7 @@ class _PasaBuyRequestCard extends StatelessWidget {
                     children: [
                       Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.shopping_bag_rounded, size: 18, color: Colors.orange)),
                       const SizedBox(width: 16),
-                      Expanded(child: Text(request.itemDescription, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A)), maxLines: 2, overflow: TextOverflow.ellipsis)),
+                      Expanded(child: Text('${request.itemDescription} (Qty: ${request.itemQuantity})', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A)), maxLines: 2, overflow: TextOverflow.ellipsis)),
                     ],
                   ),
                   const SizedBox(height: 24),

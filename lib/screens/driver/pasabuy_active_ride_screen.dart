@@ -1718,7 +1718,7 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
                       border: Border.all(color: Colors.grey.shade200),
                     ),
                     child: Text(
-                      request.itemDescription,
+                      '${request.itemDescription} (Qty: ${request.itemQuantity})',
                       style: const TextStyle(
                         fontSize: 14,
                         height: 1.5,

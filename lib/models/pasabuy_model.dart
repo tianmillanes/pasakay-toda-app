@@ -20,6 +20,7 @@ class PasaBuyModel {
   final GeoPoint dropoffLocation;
   final String dropoffAddress;
   final String itemDescription;
+  final String itemQuantity;
   final double fare;
   final PasaBuyStatus status;
   final String? driverId;
@@ -37,6 +38,8 @@ class PasaBuyModel {
   final DateTime? expiresAt;
   final String? barangayId;
   final String? barangayName;
+  final bool isRated;
+  final double? rating;
 
   PasaBuyModel({
     required this.id,
@@ -48,6 +51,7 @@ class PasaBuyModel {
     required this.dropoffLocation,
     required this.dropoffAddress,
     required this.itemDescription,
+    required this.itemQuantity,
     required this.fare,
     required this.status,
     this.driverId,
@@ -65,6 +69,8 @@ class PasaBuyModel {
     this.barangayId,
     this.barangayName,
     this.workflowLogs = const [],
+    this.isRated = false,
+    this.rating,
   });
 
   factory PasaBuyModel.fromFirestore(DocumentSnapshot doc) {
@@ -80,6 +86,7 @@ class PasaBuyModel {
       dropoffLocation: data['dropoffLocation'] as GeoPoint,
       dropoffAddress: data['dropoffAddress'] ?? '',
       itemDescription: data['itemDescription'] ?? '',
+      itemQuantity: data['itemQuantity'] ?? '1',
       fare: (data['fare'] ?? data['budget'] ?? 0.0).toDouble(),
       status: _parseStatus(data['status']),
       driverId: data['driverId'],
@@ -97,6 +104,8 @@ class PasaBuyModel {
       barangayId: data['barangayId'],
       barangayName: data['barangayName'],
       workflowLogs: List<Map<String, dynamic>>.from(data['workflowLogs'] ?? []),
+      isRated: data['isRated'] ?? false,
+      rating: data['rating'] != null ? (data['rating'] as num).toDouble() : null,
     );
   }
 
@@ -129,6 +138,7 @@ class PasaBuyModel {
       'dropoffLocation': dropoffLocation,
       'dropoffAddress': dropoffAddress,
       'itemDescription': itemDescription,
+      'itemQuantity': itemQuantity,
       'fare': fare,
       'status': status.toString().split('.').last,
       'driverId': driverId,
@@ -141,6 +151,8 @@ class PasaBuyModel {
       'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
       'barangayId': barangayId,
       'barangayName': barangayName,
+      'isRated': isRated,
+      if (rating != null) 'rating': rating,
     };
   }
 
@@ -153,6 +165,8 @@ class PasaBuyModel {
     DateTime? acceptedAt,
     DateTime? completedAt,
     DateTime? expiresAt,
+    bool? isRated,
+    double? rating,
   }) {
     return PasaBuyModel(
       id: id,
@@ -164,6 +178,7 @@ class PasaBuyModel {
       dropoffLocation: dropoffLocation,
       dropoffAddress: dropoffAddress,
       itemDescription: itemDescription,
+      itemQuantity: itemQuantity,
       fare: fare,
       status: status ?? this.status,
       driverId: driverId ?? this.driverId,
@@ -176,6 +191,8 @@ class PasaBuyModel {
       expiresAt: expiresAt ?? this.expiresAt,
       barangayId: barangayId,
       barangayName: barangayName,
+      isRated: isRated ?? this.isRated,
+      rating: rating ?? this.rating,
     );
   }
 }
