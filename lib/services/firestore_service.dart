@@ -1651,16 +1651,35 @@ class FirestoreService extends ChangeNotifier with LoadingStateMixin {
   /// Gets the aggregate rating for a driver
   Future<Map<String, dynamic>> getDriverAggregateRating(String driverId) async {
     try {
-      final query = _firestore.collection('driver_reviews').where('driverId', isEqualTo: driverId);
-      final aggregateQuery = query.aggregate(
-        average('rating'),
-        count(),
-      );
-      final snapshot = await aggregateQuery.get();
+      // Fetch all reviews for this driver
+      final querySnapshot = await _firestore
+          .collection('driver_reviews')
+          .where('driverId', isEqualTo: driverId)
+          .get();
+      
+      final docs = querySnapshot.docs;
+      final count = docs.length;
+      
+      if (count == 0) {
+        return {
+          'averageRating': 0.0,
+          'totalRatings': 0,
+        };
+      }
+      
+      // Calculate average manually
+      double totalRating = 0.0;
+      for (final doc in docs) {
+        final data = doc.data();
+        final rating = (data['rating'] as num?)?.toDouble() ?? 0.0;
+        totalRating += rating;
+      }
+      
+      final averageRating = totalRating / count;
       
       return {
-        'averageRating': snapshot.getAverage('rating') ?? 0.0,
-        'totalRatings': snapshot.count ?? 0,
+        'averageRating': averageRating,
+        'totalRatings': count,
       };
     } catch (e) {
       print('Error calculating aggregate rating: $e');
@@ -1673,12 +1692,39 @@ class FirestoreService extends ChangeNotifier with LoadingStateMixin {
 
   /// Get the list of reviews for a driver
   Stream<List<Map<String, dynamic>>> getDriverReviews(String driverId) {
-    return _firestore
-        .collection('driver_reviews')
-        .where('driverId', isEqualTo: driverId)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList());
+    try {
+      return _firestore
+          .collection('driver_reviews')
+          .where('driverId', isEqualTo: driverId)
+          .snapshots()
+          .map((snapshot) {
+            final docs = snapshot.docs.map((doc) {
+              final data = doc.data();
+              // Convert Timestamp to DateTime if needed
+              if (data['createdAt'] is Timestamp) {
+                data['createdAt'] = (data['createdAt'] as Timestamp).toDate();
+              }
+              return {'id': doc.id, ...data};
+            }).toList();
+            
+            // Sort locally by createdAt
+            docs.sort((a, b) {
+              final aTime = a['createdAt'] as DateTime?;
+              final bTime = b['createdAt'] as DateTime?;
+              if (aTime == null || bTime == null) return 0;
+              return bTime.compareTo(aTime); // Descending
+            });
+            
+            return docs;
+          })
+          .handleError((error) {
+            print('Error in getDriverReviews stream: $error');
+            return <Map<String, dynamic>>[];
+          });
+    } catch (e) {
+      print('Error setting up getDriverReviews stream: $e');
+      return Stream.value(<Map<String, dynamic>>[]);
+    }
   }
 
   /// Check if a ride can be cancelled by passenger
@@ -1832,11 +1878,15 @@ class FirestoreService extends ChangeNotifier with LoadingStateMixin {
       return true;
     }
 
-    // Define valid transitions
+    // Define valid transitions - include both canonical and alias names
     final validTransitions = {
-      'accepted': ['driver_on_way', 'cancelled'],
-      'driver_on_way': ['arrived_pickup', 'cancelled'],
-      'arrived_pickup': ['delivery_in_progress', 'cancelled'],
+      'accepted': ['driver_on_way', 'driver_going_to_pickup', 'cancelled'],
+      'driver_on_way': ['arrived_pickup', 'arrived_at_pickup', 'cancelled'],
+      'driver_going_to_pickup': ['arrived_pickup', 'arrived_at_pickup', 'cancelled'],
+      'arrived_pickup': ['driver_going_to_store', 'cancelled'],
+      'arrived_at_pickup': ['driver_going_to_store', 'cancelled'],
+      'driver_going_to_store': ['arrived_at_store', 'cancelled'],
+      'arrived_at_store': ['delivery_in_progress', 'cancelled'],
       'delivery_in_progress': ['completed', 'cancelled'],
       'completed': [], // Terminal state
       'cancelled': [], // Terminal state
@@ -3506,6 +3556,8 @@ class FirestoreService extends ChangeNotifier with LoadingStateMixin {
     String passengerPhone,
     GeoPoint pickupLocation,
     String pickupAddress,
+    GeoPoint? storeLocation,
+    String? storeAddress,
     GeoPoint dropoffLocation,
     String dropoffAddress,
     String itemDescription,
@@ -3593,6 +3645,8 @@ class FirestoreService extends ChangeNotifier with LoadingStateMixin {
         'passengerPhone': passengerPhone,
         'pickupLocation': pickupLocation,
         'pickupAddress': pickupAddress,
+        'storeLocation': storeLocation,
+        'storeAddress': storeAddress,
         'dropoffLocation': dropoffLocation,
         'dropoffAddress': dropoffAddress,
         'itemDescription': itemDescription,
@@ -3986,11 +4040,19 @@ class FirestoreService extends ChangeNotifier with LoadingStateMixin {
           updates['acceptedAt'] = Timestamp.now();
           if (driverId != null) updates['driverId'] = driverId;
           break;
+        case PasaBuyStatus.driver_going_to_pickup:
         case PasaBuyStatus.driver_on_way:
-          updates['driverOnWayAt'] = Timestamp.now();
+          updates['driverGoingToPickupAt'] = Timestamp.now();
           break;
+        case PasaBuyStatus.arrived_at_pickup:
         case PasaBuyStatus.arrived_pickup:
           updates['arrivedAtPickupAt'] = Timestamp.now();
+          break;
+        case PasaBuyStatus.driver_going_to_store:
+          updates['driverGoingToStoreAt'] = Timestamp.now();
+          break;
+        case PasaBuyStatus.arrived_at_store:
+          updates['arrivedAtStoreAt'] = Timestamp.now();
           updates['shoppingStartedAt'] = Timestamp.now();
           break;
         case PasaBuyStatus.delivery_in_progress:

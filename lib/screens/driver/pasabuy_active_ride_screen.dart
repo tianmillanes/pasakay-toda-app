@@ -50,6 +50,7 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
   Uint8List? _driverPuckImageBytes;
   String? _driverNameInitial;
   mapbox.CircleAnnotation? _pickupMarker;
+  mapbox.CircleAnnotation? _storeMarker;
   mapbox.CircleAnnotation? _dropoffMarker;
   
   bool _isLoading = false;
@@ -690,7 +691,8 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
 
       print('🔄 PasaBuy status updated: $oldStatus -> ${request.status}');
 
-      if (request.status == PasaBuyStatus.arrived_pickup) {
+      // Reset flags on relevant status changes
+      if (request.status == PasaBuyStatus.arrived_at_pickup) {
         _hasStartedStoreTrip = false;
       }
 
@@ -711,18 +713,25 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
       }
 
       // Handle navigation transitions
-      if (request.status == PasaBuyStatus.driver_on_way) {
+      if (request.status == PasaBuyStatus.driver_going_to_pickup) {
         if (!_navigationService.isNavigating) {
           await _startNavigationToPickup();
         }
-      } else if (request.status == PasaBuyStatus.arrived_pickup) {
+      } else if (request.status == PasaBuyStatus.arrived_at_pickup) {
         if (_navigationService.isNavigating) {
           await _navigationService.stopNavigation();
         }
         _fitTripPreview();
-        // _startShoppingTimer();
+      } else if (request.status == PasaBuyStatus.driver_going_to_store) {
+        if (!_navigationService.isNavigating) {
+          await _startNavigationToStore();
+        }
+      } else if (request.status == PasaBuyStatus.arrived_at_store) {
+        if (_navigationService.isNavigating) {
+          await _navigationService.stopNavigation();
+        }
+        _fitTripPreview();
       } else if (request.status == PasaBuyStatus.delivery_in_progress) {
-        // _shoppingTimer?.cancel();
         if (!_navigationService.isNavigating) {
           await _startNavigationToDropoff();
         }
@@ -765,8 +774,10 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
 
   void _updateEtaToPickup(double driverLat, double driverLng) {
     final status = _currentRequest.status;
-    if (status != PasaBuyStatus.accepted &&
-        status != PasaBuyStatus.driver_on_way &&
+    
+    // Only show ETA for navigation statuses
+    if (status != PasaBuyStatus.driver_going_to_pickup &&
+        status != PasaBuyStatus.driver_going_to_store &&
         status != PasaBuyStatus.delivery_in_progress) {
       if (_etaToPickup != null) {
         setState(() => _etaToPickup = null);
@@ -780,7 +791,11 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
     if (status == PasaBuyStatus.delivery_in_progress) {
       targetLat = _currentRequest.dropoffLocation.latitude;
       targetLng = _currentRequest.dropoffLocation.longitude;
+    } else if (status == PasaBuyStatus.driver_going_to_store && _currentRequest.storeLocation != null) {
+      targetLat = _currentRequest.storeLocation!.latitude;
+      targetLng = _currentRequest.storeLocation!.longitude;
     } else {
+      // driver_going_to_pickup
       targetLat = _currentRequest.pickupLocation.latitude;
       targetLng = _currentRequest.pickupLocation.longitude;
     }
@@ -807,13 +822,130 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
     if (_lineAnnotationManager == null) return;
 
     try {
+      final storeLoc = request.storeLocation ?? request.pickupLocation;
+      final bool hasSeparateStore = request.storeLocation != null &&
+          (storeLoc.latitude != request.pickupLocation.latitude ||
+           storeLoc.longitude != request.pickupLocation.longitude);
+
+      // Accepted: Show full preview pickup -> store -> dropoff
+      if (request.status == PasaBuyStatus.accepted) {
+        await _lineAnnotationManager!.deleteAll();
+        _routeLine = null;
+
+        // Draw pickup to store (blue)
+        final pickupToStoreRoute = await FareService.getRouteGeometry(
+          originLat: request.pickupLocation.latitude,
+          originLng: request.pickupLocation.longitude,
+          destLat: storeLoc.latitude,
+          destLng: storeLoc.longitude,
+          includeTraffic: false,
+        );
+        
+        if (pickupToStoreRoute.isNotEmpty) {
+          final positions1 = PolylineDecoder.toMapboxPositions(pickupToStoreRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions1),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 5.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.8,
+            ),
+          );
+        }
+        
+        // Draw store to dropoff (blue)
+        final storeToDropoffRoute = await FareService.getRouteGeometry(
+          originLat: storeLoc.latitude,
+          originLng: storeLoc.longitude,
+          destLat: request.dropoffLocation.latitude,
+          destLng: request.dropoffLocation.longitude,
+          includeTraffic: false,
+        );
+        
+        if (storeToDropoffRoute.isNotEmpty) {
+          final positions2 = PolylineDecoder.toMapboxPositions(storeToDropoffRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions2),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 5.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.8,
+            ),
+          );
+        }
+        _fitTripPreview(); // Auto zoom out to show preview
+      }
+
+      // Arrived at pickup: Show pickup -> store only
+      if (request.status == PasaBuyStatus.arrived_at_pickup || request.status == PasaBuyStatus.arrived_pickup) {
+        await _lineAnnotationManager!.deleteAll();
+        _routeLine = null;
+
+        final pickupToStoreRoute = await FareService.getRouteGeometry(
+          originLat: request.pickupLocation.latitude,
+          originLng: request.pickupLocation.longitude,
+          destLat: storeLoc.latitude,
+          destLng: storeLoc.longitude,
+          includeTraffic: false,
+        );
+        
+        if (pickupToStoreRoute.isNotEmpty) {
+          final positions = PolylineDecoder.toMapboxPositions(pickupToStoreRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 5.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.8,
+            ),
+          );
+        }
+        _fitTripPreview(); // Auto zoom out to show preview
+        return;
+      }
+
+      // Arrived at store: Show store -> dropoff only
+      if (request.status == PasaBuyStatus.arrived_at_store) {
+        await _lineAnnotationManager!.deleteAll();
+        _routeLine = null;
+
+        final storeToDropoffRoute = await FareService.getRouteGeometry(
+          originLat: storeLoc.latitude,
+          originLng: storeLoc.longitude,
+          destLat: request.dropoffLocation.latitude,
+          destLng: request.dropoffLocation.longitude,
+          includeTraffic: false,
+        );
+        
+        if (storeToDropoffRoute.isNotEmpty) {
+          final positions = PolylineDecoder.toMapboxPositions(storeToDropoffRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 5.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.8,
+            ),
+          );
+        }
+        _fitTripPreview(); // Auto zoom out to show preview
+        return;
+      }
+
+      // For other statuses (driving), use navigation or driver location
+      // Clear any leftover preview lines first
+      await _lineAnnotationManager!.deleteAll();
+      _routeLine = null;
+      
       List<app_latlng.LatLng> routeGeometry;
       
       if (_navigationService.isNavigating) {
-        // Use navigation service route with improved snapping
         routeGeometry = _navigationService.remainingRoutePoints;
 
-        // Get current driver location with better accuracy
         app_latlng.LatLng? driverLoc;
         final navState = _navStateNotifier.value;
         if (navState != null && (navState.currentLocation.latitude != 0 || navState.currentLocation.longitude != 0)) {
@@ -823,50 +955,31 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
         }
 
         if (driverLoc != null && routeGeometry.isNotEmpty) {
-          // Improved snapping: snap to route and ensure smooth connection
           final snapped = _navigationService.snapToRoute(driverLoc);
-          
-          // Check if snapped point is too far from actual location (>50m)
           final snapDistance = Geolocator.distanceBetween(
             driverLoc.latitude, driverLoc.longitude,
             snapped.latitude, snapped.longitude,
           );
           
           if (snapDistance > 50) {
-            // If snap is too far, create a smooth connection from driver to route
             final nearestRoutePoint = _findNearestRoutePoint(driverLoc, routeGeometry);
             routeGeometry = [driverLoc, nearestRoutePoint, ...routeGeometry];
           } else {
-            // Use snapped location for smooth route display
             routeGeometry = [snapped, ...routeGeometry];
           }
         }
       } else {
-        // Static route display with improved accuracy
-        final app_latlng.LatLng origin;
-        final app_latlng.LatLng destination;
+        // Driver location to destination
+        final driverLoc = await _getDriverLatLng();
+        if (driverLoc == null) return;
+        
+        final destination = (request.status == PasaBuyStatus.delivery_in_progress)
+            ? app_latlng.LatLng(request.dropoffLocation.latitude, request.dropoffLocation.longitude)
+            : app_latlng.LatLng(request.pickupLocation.latitude, request.pickupLocation.longitude);
 
-        if (request.status == PasaBuyStatus.pending || 
-            request.status == PasaBuyStatus.accepted ||
-            request.status == PasaBuyStatus.arrived_pickup) {
-          // Store to Dropoff preview
-          origin = app_latlng.LatLng(request.pickupLocation.latitude, request.pickupLocation.longitude);
-          destination = app_latlng.LatLng(request.dropoffLocation.latitude, request.dropoffLocation.longitude);
-        } else {
-          final driverLoc = await _getDriverLatLng();
-          if (driverLoc == null) return;
-          
-          origin = driverLoc;
-          // If delivering, go to dropoff. Else (on way to store), go to pickup.
-          destination = (request.status == PasaBuyStatus.delivery_in_progress)
-              ? app_latlng.LatLng(request.dropoffLocation.latitude, request.dropoffLocation.longitude)
-              : app_latlng.LatLng(request.pickupLocation.latitude, request.pickupLocation.longitude);
-        }
-
-        // Get high-quality route with traffic data for better accuracy
         routeGeometry = await FareService.getRouteGeometry(
-          originLat: origin.latitude,
-          originLng: origin.longitude,
+          originLat: driverLoc.latitude,
+          originLng: driverLoc.longitude,
           destLat: destination.latitude,
           destLng: destination.longitude,
           includeTraffic: true,
@@ -875,18 +988,16 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
 
       if (routeGeometry.isEmpty) return;
 
-      // Improved polyline simplification based on zoom level and navigation state
       final simplifiedGeometry = _getOptimizedRouteGeometry(routeGeometry);
-
       final positions = PolylineDecoder.toMapboxPositions(simplifiedGeometry);
-      final color = AppTheme.primaryGreen.value;
+      final color = const Color(0xFF2196F3).value; // Blue for all routes
       final width = _navigationService.isNavigating ? 8.0 : 6.0;
 
       if (_routeLine != null) {
         _routeLine!.geometry = mapbox.LineString(coordinates: positions);
         _routeLine!.lineColor = color;
         _routeLine!.lineWidth = width;
-        _routeLine!.lineOpacity = 0.9; // Increased opacity for better visibility
+        _routeLine!.lineOpacity = 0.9;
         _routeLine!.lineJoin = mapbox.LineJoin.ROUND;
         await _lineAnnotationManager!.update(_routeLine!);
       } else {
@@ -978,7 +1089,7 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
         _routeLine!.geometry = mapbox.LineString(coordinates: positions);
         await _lineAnnotationManager!.update(_routeLine!);
       } else {
-        final color = AppTheme.primaryGreen.value;
+        final color = const Color(0xFF2196F3).value; // Blue
         _routeLine = await _lineAnnotationManager!.create(
           mapbox.PolylineAnnotationOptions(
             geometry: mapbox.LineString(coordinates: positions),
@@ -1013,6 +1124,24 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
     }
   }
 
+  Future<void> _startNavigationToStore() async {
+    try {
+      final driverLoc = await _getDriverLatLng();
+      if (driverLoc == null) {
+        if (mounted) SnackbarHelper.showError(context, 'Could not get current location.');
+        return;
+      }
+
+      // If no separate store location, use pickup location
+      final storeLoc = _currentRequest.storeLocation ?? _currentRequest.pickupLocation;
+      final dest = app_latlng.LatLng(storeLoc.latitude, storeLoc.longitude);
+      
+      await _navigationService.startNavigation(driverLoc, dest, enableVoice: true);
+    } catch (e) {
+      print('Error starting navigation to store: $e');
+    }
+  }
+
   Future<void> _startNavigationToDropoff() async {
     try {
       final driverLoc = await _getDriverLatLng();
@@ -1028,7 +1157,7 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
       
       await _navigationService.startNavigation(driverLoc, dest, enableVoice: true);
     } catch (e) {
-      print('Error starting navigation: $e');
+      print('Error starting navigation to dropoff: $e');
     }
   }
 
@@ -1046,8 +1175,8 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
         _pickupMarker = await _circleAnnotationManager!.create(
           mapbox.CircleAnnotationOptions(
             geometry: mapbox.Point(coordinates: mapbox.Position(_currentRequest.pickupLocation.longitude, _currentRequest.pickupLocation.latitude)),
-            circleRadius: 8.0,
-            circleColor: const Color(0xFF4CAF50).value, // Consistent Green
+            circleRadius: 10.0,
+            circleColor: const Color(0xFF4CAF50).value, // Green for pickup
             circleStrokeWidth: 2.0,
             circleStrokeColor: Colors.white.value,
           ),
@@ -1059,14 +1188,39 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
         _pickupMarker = null;
       }
     }
+    
+    // Store Marker (Blue) - if different from pickup
+    final storeLoc = _currentRequest.storeLocation ?? _currentRequest.pickupLocation;
+    final bool hasSeparateStore = _currentRequest.storeLocation != null &&
+        (storeLoc.latitude != _currentRequest.pickupLocation.latitude ||
+         storeLoc.longitude != _currentRequest.pickupLocation.longitude);
+    
+    if (hasSeparateStore && _currentRequest.status != PasaBuyStatus.delivery_in_progress) {
+      if (_storeMarker == null) {
+        _storeMarker = await _circleAnnotationManager!.create(
+          mapbox.CircleAnnotationOptions(
+            geometry: mapbox.Point(coordinates: mapbox.Position(storeLoc.longitude, storeLoc.latitude)),
+            circleRadius: 10.0,
+            circleColor: const Color(0xFF2196F3).value, // Blue for store
+            circleStrokeWidth: 2.0,
+            circleStrokeColor: Colors.white.value,
+          ),
+        );
+      }
+    } else {
+      if (_storeMarker != null) {
+        await _circleAnnotationManager!.delete(_storeMarker!);
+        _storeMarker = null;
+      }
+    }
  
-    // Dropoff Marker (Passenger)
+    // Dropoff Marker (Red)
     if (_dropoffMarker == null) {
       _dropoffMarker = await _circleAnnotationManager!.create(
         mapbox.CircleAnnotationOptions(
           geometry: mapbox.Point(coordinates: mapbox.Position(_currentRequest.dropoffLocation.longitude, _currentRequest.dropoffLocation.latitude)),
-          circleRadius: 8.0,
-          circleColor: const Color(0xFFF44336).value, // Consistent Red
+          circleRadius: 10.0,
+          circleColor: const Color(0xFFF44336).value, // Red for delivery
           circleStrokeWidth: 2.0,
           circleStrokeColor: Colors.white.value,
         ),
@@ -1102,6 +1256,7 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
     _driverPuck = null;
     _driverPoint = null;
     _pickupMarker = null;
+    _storeMarker = null;
     _dropoffMarker = null;
     _routeLine = null;
     _isCreatingPuck = false;
@@ -1775,8 +1930,10 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
 
       String message = 'Status updated';
       switch (newStatus) {
-        case PasaBuyStatus.driver_on_way: message = 'Heading to pickup location'; break;
-        case PasaBuyStatus.arrived_pickup: message = 'Arrived at pickup'; break;
+        case PasaBuyStatus.driver_going_to_pickup: message = 'Heading to pickup location'; break;
+        case PasaBuyStatus.arrived_at_pickup: message = 'Arrived at pickup'; break;
+        case PasaBuyStatus.driver_going_to_store: message = 'Heading to store'; break;
+        case PasaBuyStatus.arrived_at_store: message = 'Arrived at store'; break;
         case PasaBuyStatus.delivery_in_progress: message = 'Items bought! Heading to destination'; break;
         case PasaBuyStatus.completed: message = 'Delivery completed!'; break;
         default: break;
@@ -1804,7 +1961,7 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
           label: 'Start Going to Pickup',
           onPressed: () async {
             await _updateStatus(
-              PasaBuyStatus.driver_on_way,
+              PasaBuyStatus.driver_going_to_pickup,
               logAction: 'started_to_pickup',
             );
             await _zoomToDriverOnMap();
@@ -1812,44 +1969,78 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
           color: AppTheme.primaryGreen,
         );
 
-      case PasaBuyStatus.driver_on_way:
+      case PasaBuyStatus.driver_going_to_pickup:
         return _buildActionButton(
-          label: 'I Have Arrived',
+          label: 'I Have Arrived at Pickup',
           onPressed: () => _updateStatus(
-            PasaBuyStatus.arrived_pickup,
+            PasaBuyStatus.arrived_at_pickup,
             logAction: 'arrived_at_pickup',
           ),
           color: Colors.orange,
         );
 
-      case PasaBuyStatus.arrived_pickup:
-        final canFinish = _canClickDoneBuying();
-        if (!_hasStartedStoreTrip) {
+      case PasaBuyStatus.arrived_at_pickup:
+        // Check if there's a separate store location
+        final hasStoreLocation = request.storeLocation != null;
+        if (hasStoreLocation && !_hasStartedStoreTrip) {
           return _buildActionButton(
             label: 'Start Going to Store',
-            onPressed: () {
+            onPressed: () async {
+              await _updateStatus(
+                PasaBuyStatus.driver_going_to_store,
+                logAction: 'started_to_store',
+              );
               setState(() {
                 _hasStartedStoreTrip = true;
               });
+              await _zoomToDriverOnMap();
             },
             color: AppTheme.primaryGreen,
           );
         }
+        // If no store location or already started store trip, show checklist
         return Column(
           children: [
             _buildChecklistUI(),
             const SizedBox(height: 16),
             _buildActionButton(
-              label: 'Done Buying',
-              onPressed: canFinish
-                  ? () async {
-                      await _updateStatus(
-                        PasaBuyStatus.delivery_in_progress,
-                        logAction: 'finished_buying',
-                      );
-                      await _zoomToDriverOnMap();
-                    }
-                  : null,
+              label: 'Done Buying - Start Delivery',
+              onPressed: () async {
+                await _updateStatus(
+                  PasaBuyStatus.delivery_in_progress,
+                  logAction: 'finished_buying',
+                );
+                await _zoomToDriverOnMap();
+              },
+              color: AppTheme.primaryGreen,
+            ),
+          ],
+        );
+
+      case PasaBuyStatus.driver_going_to_store:
+        return _buildActionButton(
+          label: 'I Have Arrived at Store',
+          onPressed: () => _updateStatus(
+            PasaBuyStatus.arrived_at_store,
+            logAction: 'arrived_at_store',
+          ),
+          color: Colors.orange,
+        );
+
+      case PasaBuyStatus.arrived_at_store:
+        return Column(
+          children: [
+            _buildChecklistUI(),
+            const SizedBox(height: 16),
+            _buildActionButton(
+              label: 'Done Buying - Start Delivery',
+              onPressed: () async {
+                await _updateStatus(
+                  PasaBuyStatus.delivery_in_progress,
+                  logAction: 'finished_buying',
+                );
+                await _zoomToDriverOnMap();
+              },
               color: AppTheme.primaryGreen,
             ),
           ],
@@ -2078,13 +2269,23 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
         color = Colors.green;
         text = 'ACCEPTED';
         break;
+      case PasaBuyStatus.driver_going_to_pickup:
       case PasaBuyStatus.driver_on_way:
         color = Colors.green;
-        text = 'ON WAY';
+        text = 'TO PICKUP';
         break;
+      case PasaBuyStatus.arrived_at_pickup:
       case PasaBuyStatus.arrived_pickup:
-        color = Colors.purple;
+        color = Colors.orange;
         text = 'AT PICKUP';
+        break;
+      case PasaBuyStatus.driver_going_to_store:
+        color = Colors.blue;
+        text = 'TO STORE';
+        break;
+      case PasaBuyStatus.arrived_at_store:
+        color = Colors.purple;
+        text = 'AT STORE';
         break;
       case PasaBuyStatus.delivery_in_progress:
         color = Colors.indigo;
@@ -2229,29 +2430,38 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
     switch (status) {
       case PasaBuyStatus.pending: return 'New PasaBuy Request';
       case PasaBuyStatus.accepted: return 'PasaBuy Accepted';
-      case PasaBuyStatus.driver_on_way: return 'Going to Pickup';
-      case PasaBuyStatus.arrived_pickup: return 'Arrived at Pickup';
+      case PasaBuyStatus.driver_going_to_pickup: return 'Going to Pickup';
+      case PasaBuyStatus.arrived_at_pickup: return 'At Pickup Location';
+      case PasaBuyStatus.driver_going_to_store: return 'Going to Store';
+      case PasaBuyStatus.arrived_at_store: return 'At Store';
       case PasaBuyStatus.delivery_in_progress: return 'Delivery In Progress';
       case PasaBuyStatus.completed: return 'Delivery Completed';
+      case PasaBuyStatus.cancelled: return 'Request Cancelled';
       default: return 'PasaBuy Details';
     }
   }
 
   String _getStatusSubtext(PasaBuyStatus status) {
     switch (status) {
-      case PasaBuyStatus.accepted: return 'Head to pickup location';
-      case PasaBuyStatus.driver_on_way: return 'Driving to pickup location';
-      case PasaBuyStatus.arrived_pickup: return 'Buy the items requested';
+      case PasaBuyStatus.accepted: return 'Head to pickup location to get money';
+      case PasaBuyStatus.driver_going_to_pickup: return 'Driving to pickup location';
+      case PasaBuyStatus.arrived_at_pickup: return 'Collect payment from passenger';
+      case PasaBuyStatus.driver_going_to_store: return 'Driving to store to buy items';
+      case PasaBuyStatus.arrived_at_store: return 'Buy the items requested';
       case PasaBuyStatus.delivery_in_progress: return 'Drive safely to passenger';
       case PasaBuyStatus.completed: return 'Thank you for your service';
+      case PasaBuyStatus.cancelled: return 'Request has been cancelled';
       default: return 'Trip Information';
     }
   }
 
   Color _getStatusColor(PasaBuyStatus status) {
     switch (status) {
-      case PasaBuyStatus.driver_on_way: return Colors.green;
-      case PasaBuyStatus.arrived_pickup: return Colors.orange;
+      case PasaBuyStatus.driver_going_to_pickup: return Colors.green;
+      case PasaBuyStatus.arrived_at_pickup: return Colors.orange;
+      case PasaBuyStatus.driver_going_to_store: return Colors.blue;
+      case PasaBuyStatus.arrived_at_store: return Colors.purple;
+      case PasaBuyStatus.delivery_in_progress: return Colors.indigo;
       case PasaBuyStatus.completed: return AppTheme.primaryGreen;
       default: return AppTheme.primaryGreen;
     }
@@ -2259,8 +2469,10 @@ class _PasaBuyActiveRideScreenState extends State<PasaBuyActiveRideScreen> with 
 
   IconData _getStatusIcon(PasaBuyStatus status) {
     switch (status) {
-      case PasaBuyStatus.driver_on_way: return Icons.directions_car_rounded;
-      case PasaBuyStatus.arrived_pickup: return Icons.store_rounded;
+      case PasaBuyStatus.driver_going_to_pickup: return Icons.directions_car_rounded;
+      case PasaBuyStatus.arrived_at_pickup: return Icons.location_on_rounded;
+      case PasaBuyStatus.driver_going_to_store: return Icons.store_rounded;
+      case PasaBuyStatus.arrived_at_store: return Icons.shopping_bag_rounded;
       case PasaBuyStatus.delivery_in_progress: return Icons.delivery_dining_rounded;
       case PasaBuyStatus.completed: return Icons.verified_rounded;
       default: return Icons.check_circle_rounded;

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import '../../models/lat_lng.dart';
@@ -13,11 +14,15 @@ import 'dart:async';
 
 class MapPickerScreen extends StatefulWidget {
   final bool isForPickup;
+  final bool isStoreLocation; // NEW: true when selecting store location in pasabuy
+  final bool validateGeofence; // Allow skipping geofence validation for store locations
   final LatLng? initialLocation;
 
   const MapPickerScreen({
     super.key,
     required this.isForPickup,
+    this.isStoreLocation = false, // Default to false
+    this.validateGeofence = true, // Default to true for backward compatibility
     this.initialLocation,
   });
 
@@ -130,6 +135,14 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
 
   Future<void> _loadServiceArea() async {
     if (_mapboxMap == null) return;
+    
+    // Skip showing service area boundary for store locations (can be anywhere)
+    if (widget.isStoreLocation) {
+      if (kDebugMode) {
+        print('Skipping service area boundary for store location');
+      }
+      return;
+    }
     
     try {
       final locationService = Provider.of<LocationService>(
@@ -441,7 +454,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     if (!mounted) return;
 
     // Check geofence before confirming pickup location
-    if (widget.isForPickup) {
+    // Skip geofence validation for store locations in pasabuy (validateGeofence = false)
+    if (widget.isForPickup && widget.validateGeofence) {
       bool geofenceValid = false;
       try {
         final locationService = Provider.of<LocationService>(
@@ -558,7 +572,9 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                               color: Color(0xFF202124),
                             ),
                             decoration: InputDecoration(
-                              hintText: widget.isForPickup ? 'Search pickup location' : 'Search destination',
+                              hintText: widget.isStoreLocation 
+                                  ? 'Search store location' 
+                                  : (widget.isForPickup ? 'Search pickup location' : 'Search destination'),
                               hintStyle: const TextStyle(
                                 color: Color(0xFF70757A),
                                 fontWeight: FontWeight.w400,
@@ -724,7 +740,9 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              widget.isForPickup ? 'Set Pickup Location' : 'Set Destination',
+                              widget.isStoreLocation 
+                                  ? 'Set Store Location'
+                                  : (widget.isForPickup ? 'Set Pickup Location' : 'Set Destination'),
                               style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w700,
@@ -735,9 +753,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                             Text(
                               _selectedAddress.isNotEmpty 
                                 ? _selectedAddress 
-                                : (widget.isForPickup 
-                                    ? 'Select where you want to be picked up' 
-                                    : 'Select your destination'),
+                                : (widget.isStoreLocation
+                                    ? 'Select where to buy items'
+                                    : (widget.isForPickup 
+                                        ? 'Select where you want to be picked up' 
+                                        : 'Select your destination')),
                               style: TextStyle(
                                 fontSize: 14,
                                 color: _selectedAddress.isNotEmpty ? const Color(0xFF5F6368) : const Color(0xFF70757A),

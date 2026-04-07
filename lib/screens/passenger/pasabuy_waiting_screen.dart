@@ -488,30 +488,145 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
 
     final request = _currentRequest ?? widget.request;
     final status = request.status;
-
-    double originLat;
-    double originLng;
-    double destLat;
-    double destLng;
-
-    if (status == PasaBuyStatus.driver_on_way && _driverLatLng != null) {
-      originLat = _driverLatLng!.latitude;
-      originLng = _driverLatLng!.longitude;
-      destLat = request.pickupLocation.latitude;
-      destLng = request.pickupLocation.longitude;
-    } else if (status == PasaBuyStatus.delivery_in_progress && _driverLatLng != null) {
-      originLat = _driverLatLng!.latitude;
-      originLng = _driverLatLng!.longitude;
-      destLat = request.dropoffLocation.latitude;
-      destLng = request.dropoffLocation.longitude;
-    } else {
-      originLat = request.pickupLocation.latitude;
-      originLng = request.pickupLocation.longitude;
-      destLat = request.dropoffLocation.latitude;
-      destLng = request.dropoffLocation.longitude;
-    }
+    final storeLoc = request.storeLocation ?? request.pickupLocation;
 
     try {
+      await _lineAnnotationManager!.deleteAll();
+
+      // When pending/accepted, show full preview: pickup -> store -> dropoff
+      if (status == PasaBuyStatus.pending || status == PasaBuyStatus.accepted) {
+        // Draw pickup to store route (blue)
+        final pickupToStoreRoute = await FareService.getRouteGeometry(
+          originLat: request.pickupLocation.latitude,
+          originLng: request.pickupLocation.longitude,
+          destLat: storeLoc.latitude,
+          destLng: storeLoc.longitude,
+          includeTraffic: false,
+        );
+        
+        if (pickupToStoreRoute.isNotEmpty) {
+          final positions1 = PolylineDecoder.toMapboxPositions(pickupToStoreRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions1),
+              lineColor: const Color(0xFF2196F3).value, // Blue for store route
+              lineWidth: 4.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.7,
+            ),
+          );
+        }
+        
+        // Draw store to dropoff route (blue)
+        final storeToDropoffRoute = await FareService.getRouteGeometry(
+          originLat: storeLoc.latitude,
+          originLng: storeLoc.longitude,
+          destLat: request.dropoffLocation.latitude,
+          destLng: request.dropoffLocation.longitude,
+          includeTraffic: false,
+        );
+        
+        if (storeToDropoffRoute.isNotEmpty) {
+          final positions2 = PolylineDecoder.toMapboxPositions(storeToDropoffRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions2),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 4.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.7,
+            ),
+          );
+        }
+        _fitMapBounds(); // Auto zoom out to show preview
+        return;
+      }
+
+      // Arrived at pickup: Show pickup -> store only
+      if (status == PasaBuyStatus.arrived_at_pickup || status == PasaBuyStatus.arrived_pickup) {
+        final pickupToStoreRoute = await FareService.getRouteGeometry(
+          originLat: request.pickupLocation.latitude,
+          originLng: request.pickupLocation.longitude,
+          destLat: storeLoc.latitude,
+          destLng: storeLoc.longitude,
+          includeTraffic: false,
+        );
+        
+        if (pickupToStoreRoute.isNotEmpty) {
+          final positions = PolylineDecoder.toMapboxPositions(pickupToStoreRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 5.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.8,
+            ),
+          );
+        }
+        _fitMapBounds(); // Auto zoom out to show preview
+        return;
+      }
+
+      // Arrived at store: Show store -> dropoff only (blue)
+      if (status == PasaBuyStatus.arrived_at_store) {
+        final storeToDropoffRoute = await FareService.getRouteGeometry(
+          originLat: storeLoc.latitude,
+          originLng: storeLoc.longitude,
+          destLat: request.dropoffLocation.latitude,
+          destLng: request.dropoffLocation.longitude,
+          includeTraffic: false,
+        );
+        
+        if (storeToDropoffRoute.isNotEmpty) {
+          final positions = PolylineDecoder.toMapboxPositions(storeToDropoffRoute);
+          await _lineAnnotationManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: positions),
+              lineColor: const Color(0xFF2196F3).value, // Blue
+              lineWidth: 5.0,
+              lineJoin: mapbox.LineJoin.ROUND,
+              lineOpacity: 0.8,
+            ),
+          );
+        }
+        _fitMapBounds(); // Auto zoom out to show preview
+        return;
+      }
+
+      double originLat;
+      double originLng;
+      double destLat;
+      double destLng;
+
+      // Determine destination based on status
+      if (status == PasaBuyStatus.driver_going_to_pickup && _driverLatLng != null) {
+        // Driver going to pickup (money collection point)
+        originLat = _driverLatLng!.latitude;
+        originLng = _driverLatLng!.longitude;
+        destLat = request.pickupLocation.latitude;
+        destLng = request.pickupLocation.longitude;
+      } else if (status == PasaBuyStatus.driver_going_to_store && _driverLatLng != null) {
+        // Driver going to store (buying point)
+        originLat = _driverLatLng!.latitude;
+        originLng = _driverLatLng!.longitude;
+        final storeLoc = request.storeLocation ?? request.pickupLocation;
+        destLat = storeLoc.latitude;
+        destLng = storeLoc.longitude;
+      } else if (status == PasaBuyStatus.delivery_in_progress && _driverLatLng != null) {
+        // Driver delivering to dropoff
+        originLat = _driverLatLng!.latitude;
+        originLng = _driverLatLng!.longitude;
+        destLat = request.dropoffLocation.latitude;
+        destLng = request.dropoffLocation.longitude;
+      } else {
+        // Default: show full route from pickup to dropoff
+        originLat = request.pickupLocation.latitude;
+        originLng = request.pickupLocation.longitude;
+        destLat = request.dropoffLocation.latitude;
+        destLng = request.dropoffLocation.longitude;
+      }
+
       final routeGeometry = await FareService.getRouteGeometry(
         originLat: originLat,
         originLng: originLng,
@@ -523,11 +638,10 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
       if (routeGeometry.isEmpty) return;
 
       final positions = PolylineDecoder.toMapboxPositions(routeGeometry);
-      await _lineAnnotationManager!.deleteAll();
       await _lineAnnotationManager!.create(
         mapbox.PolylineAnnotationOptions(
           geometry: mapbox.LineString(coordinates: positions),
-          lineColor: AppTheme.primaryGreen.value,
+          lineColor: const Color(0xFF2196F3).value, // Blue
           lineWidth: 5.0,
           lineJoin: mapbox.LineJoin.ROUND,
         ),
@@ -546,8 +660,11 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
     if (request.status == PasaBuyStatus.delivery_in_progress) {
       targetLat = request.dropoffLocation.latitude;
       targetLng = request.dropoffLocation.longitude;
-    } else if (request.status == PasaBuyStatus.accepted || 
-               request.status == PasaBuyStatus.driver_on_way) {
+    } else if (request.status == PasaBuyStatus.driver_going_to_store && request.storeLocation != null) {
+      targetLat = request.storeLocation!.latitude;
+      targetLng = request.storeLocation!.longitude;
+    } else if (request.status == PasaBuyStatus.driver_going_to_pickup ||
+               request.status == PasaBuyStatus.accepted) {
       targetLat = request.pickupLocation.latitude;
       targetLng = request.pickupLocation.longitude;
     } else {
@@ -618,8 +735,10 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
       final request = _currentRequest ?? widget.request;
       final status = request.status;
 
-      final shouldShowPuck = status == PasaBuyStatus.driver_on_way ||
-          status == PasaBuyStatus.arrived_pickup ||
+      final shouldShowPuck = status == PasaBuyStatus.driver_going_to_pickup ||
+          status == PasaBuyStatus.arrived_at_pickup ||
+          status == PasaBuyStatus.driver_going_to_store ||
+          status == PasaBuyStatus.arrived_at_store ||
           status == PasaBuyStatus.delivery_in_progress;
 
       if (!shouldShowPuck) {
@@ -954,23 +1073,41 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
     _driverPulseCircle = null;
     _isPulsing = false;
     
-    // Pickup (Store)
+    // Pickup (Green)
     await _circleAnnotationManager!.create(
       mapbox.CircleAnnotationOptions(
         geometry: mapbox.Point(coordinates: mapbox.Position(widget.request.pickupLocation.longitude, widget.request.pickupLocation.latitude)),
-        circleRadius: 8.0,
-        circleColor: const Color(0xFF4CAF50).value, // Consistent Green
+        circleRadius: 10.0,
+        circleColor: const Color(0xFF4CAF50).value, // Green for pickup
         circleStrokeWidth: 2.0,
         circleStrokeColor: Colors.white.value,
       ),
     );
     
-    // Dropoff
+    // Store (Blue) - if different from pickup
+    final storeLoc = widget.request.storeLocation ?? widget.request.pickupLocation;
+    final bool hasSeparateStore = widget.request.storeLocation != null &&
+        (widget.request.storeLocation!.latitude != widget.request.pickupLocation.latitude ||
+         widget.request.storeLocation!.longitude != widget.request.pickupLocation.longitude);
+    
+    if (hasSeparateStore) {
+      await _circleAnnotationManager!.create(
+        mapbox.CircleAnnotationOptions(
+          geometry: mapbox.Point(coordinates: mapbox.Position(storeLoc.longitude, storeLoc.latitude)),
+          circleRadius: 10.0,
+          circleColor: const Color(0xFF2196F3).value, // Blue for store
+          circleStrokeWidth: 2.0,
+          circleStrokeColor: Colors.white.value,
+        ),
+      );
+    }
+    
+    // Dropoff (Red)
     await _circleAnnotationManager!.create(
       mapbox.CircleAnnotationOptions(
         geometry: mapbox.Point(coordinates: mapbox.Position(widget.request.dropoffLocation.longitude, widget.request.dropoffLocation.latitude)),
-        circleRadius: 8.0,
-        circleColor: const Color(0xFFF44336).value, // Consistent Red
+        circleRadius: 10.0,
+        circleColor: const Color(0xFFF44336).value, // Red for delivery
         circleStrokeWidth: 2.0,
         circleStrokeColor: Colors.white.value,
       ),
@@ -1179,8 +1316,12 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
     switch (status) {
       case PasaBuyStatus.pending: return 'Waiting driver to accept';
       case PasaBuyStatus.accepted: return 'Driver Assigned';
+      case PasaBuyStatus.driver_going_to_pickup:
       case PasaBuyStatus.driver_on_way: return 'Driver Going to Pickup';
-      case PasaBuyStatus.arrived_pickup: return 'Driver at Pickup';
+      case PasaBuyStatus.arrived_at_pickup:
+      case PasaBuyStatus.arrived_pickup: return 'Driver at Pickup (Get Money)';
+      case PasaBuyStatus.driver_going_to_store: return 'Driver Going to Store';
+      case PasaBuyStatus.arrived_at_store: return 'Driver at Store (Buying)';
       case PasaBuyStatus.delivery_in_progress: return 'Items Bought - Delivering';
       case PasaBuyStatus.completed: return 'Delivery Completed';
       case PasaBuyStatus.cancelled: return 'Cancelled';
@@ -1190,10 +1331,14 @@ class _PasaBuyWaitingScreenState extends State<PasaBuyWaitingScreen> {
   Color _getStatusColor(PasaBuyStatus status) {
     switch (status) {
       case PasaBuyStatus.pending: return const Color(0xFFFF9800);
-      case PasaBuyStatus.accepted:
+      case PasaBuyStatus.accepted: return const Color(0xFF4CAF50);
+      case PasaBuyStatus.driver_going_to_pickup:
       case PasaBuyStatus.driver_on_way: return const Color(0xFF2196F3);
+      case PasaBuyStatus.arrived_at_pickup:
       case PasaBuyStatus.arrived_pickup: return const Color(0xFF9C27B0);
-      case PasaBuyStatus.delivery_in_progress: return const Color(0xFF00BCD4);
+      case PasaBuyStatus.driver_going_to_store: return const Color(0xFF00BCD4);
+      case PasaBuyStatus.arrived_at_store: return const Color(0xFF673AB7);
+      case PasaBuyStatus.delivery_in_progress: return const Color(0xFF3F51B5);
       case PasaBuyStatus.completed: return const Color(0xFF4CAF50);
       case PasaBuyStatus.cancelled: return const Color(0xFFFF5252);
     }

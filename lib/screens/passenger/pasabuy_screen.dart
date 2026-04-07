@@ -136,6 +136,10 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
       MaterialPageRoute(
         builder: (context) => MapPickerScreen(
           isForPickup: type == 'pickup' || type == 'store',
+          // Pass true for store location to show "Set Store Location" UI and skip geofence
+          isStoreLocation: type == 'store',
+          // Skip geofence validation for store location - it can be anywhere
+          validateGeofence: type != 'store',
           initialLocation: (type == 'pickup' ? _pickupLocation : (type == 'store' ? _storeLocation : _dropoffLocation)) ?? _currentLocation,
         ),
       ),
@@ -206,8 +210,12 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
         authService.currentUser!.uid,
         authService.currentUserModel?.name ?? 'Passenger',
         authService.currentUserModel?.phone ?? '',
-        GeoPoint(actualOrigin!.latitude, actualOrigin.longitude),
-        _sameLocation ? (_storeAddress.isNotEmpty ? _storeAddress : _pickupAddress) : _pickupAddress,
+        GeoPoint(_pickupLocation!.latitude, _pickupLocation!.longitude),
+        _pickupAddress,
+        _sameLocation && _storeLocation != null
+            ? GeoPoint(_storeLocation!.latitude, _storeLocation!.longitude)
+            : null,
+        _sameLocation ? (_storeAddress.isNotEmpty ? _storeAddress : null) : null,
         GeoPoint(actualDest!.latitude, actualDest.longitude),
         _sameLocation ? _pickupAddress : _dropoffAddress,
         _itemDescription,
@@ -237,8 +245,12 @@ class _PasaBuyScreenState extends State<PasaBuyScreen> {
               passengerId: authService.currentUser!.uid,
               passengerName: authService.currentUserModel?.name ?? 'Passenger',
               passengerPhone: authService.currentUserModel?.phone ?? '',
-              pickupLocation: GeoPoint(actualOrigin!.latitude, actualOrigin.longitude),
-              pickupAddress: _sameLocation ? (_storeAddress.isNotEmpty ? _storeAddress : _pickupAddress) : _pickupAddress,
+              pickupLocation: GeoPoint(_pickupLocation!.latitude, _pickupLocation!.longitude),
+              pickupAddress: _pickupAddress,
+              storeLocation: _sameLocation && _storeLocation != null
+                  ? GeoPoint(_storeLocation!.latitude, _storeLocation!.longitude)
+                  : null,
+              storeAddress: _sameLocation ? (_storeAddress.isNotEmpty ? _storeAddress : null) : null,
               dropoffLocation: GeoPoint(actualDest!.latitude, actualDest.longitude),
               dropoffAddress: _sameLocation ? _pickupAddress : _dropoffAddress,
               itemDescription: _itemDescription,

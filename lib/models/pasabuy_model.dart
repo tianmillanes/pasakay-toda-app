@@ -3,8 +3,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 enum PasaBuyStatus {
   pending,
   accepted,
-  driver_on_way, // Driver is heading to the store
-  arrived_pickup, // Driver arrived at store/pickup
+  driver_going_to_pickup, // Driver heading to pickup location (to get money)
+  driver_on_way, // Alias for driver_going_to_pickup (used in notification handlers)
+  arrived_at_pickup, // Driver arrived at pickup location
+  arrived_pickup, // Alias for arrived_at_pickup (used in notification handlers)
+  driver_going_to_store, // Driver heading to store (to buy items)
+  arrived_at_store, // Driver arrived at store
   delivery_in_progress, // Items bought, delivery started
   completed,
   cancelled,
@@ -15,9 +19,11 @@ class PasaBuyModel {
   final String passengerId;
   final String passengerName;
   final String passengerPhone;
-  final GeoPoint pickupLocation;
+  final GeoPoint pickupLocation; // Where driver gets money
   final String pickupAddress;
-  final GeoPoint dropoffLocation;
+  final GeoPoint? storeLocation; // Where driver buys items (optional, can be same as pickup)
+  final String? storeAddress;
+  final GeoPoint dropoffLocation; // Where items are delivered
   final String dropoffAddress;
   final String itemDescription;
   final String itemQuantity;
@@ -30,6 +36,7 @@ class PasaBuyModel {
   final DateTime createdAt;
   final DateTime? acceptedAt;
   final DateTime? arrivedAtPickupAt;
+  final DateTime? arrivedAtStoreAt;
   final DateTime? shoppingStartedAt;
   final DateTime? purchaseCompletedAt;
   final DateTime? deliveryStartedAt;
@@ -48,6 +55,8 @@ class PasaBuyModel {
     required this.passengerPhone,
     required this.pickupLocation,
     required this.pickupAddress,
+    this.storeLocation,
+    this.storeAddress,
     required this.dropoffLocation,
     required this.dropoffAddress,
     required this.itemDescription,
@@ -61,6 +70,7 @@ class PasaBuyModel {
     required this.createdAt,
     this.acceptedAt,
     this.arrivedAtPickupAt,
+    this.arrivedAtStoreAt,
     this.shoppingStartedAt,
     this.purchaseCompletedAt,
     this.deliveryStartedAt,
@@ -83,6 +93,8 @@ class PasaBuyModel {
       passengerPhone: data['passengerPhone'] ?? '',
       pickupLocation: data['pickupLocation'] as GeoPoint,
       pickupAddress: data['pickupAddress'] ?? '',
+      storeLocation: data['storeLocation'] as GeoPoint?,
+      storeAddress: data['storeAddress'],
       dropoffLocation: data['dropoffLocation'] as GeoPoint,
       dropoffAddress: data['dropoffAddress'] ?? '',
       itemDescription: data['itemDescription'] ?? '',
@@ -96,6 +108,7 @@ class PasaBuyModel {
       createdAt: data['createdAt'] != null ? (data['createdAt'] as Timestamp).toDate() : DateTime.now(),
       acceptedAt: data['acceptedAt'] != null ? (data['acceptedAt'] as Timestamp).toDate() : null,
       arrivedAtPickupAt: data['arrivedAtPickupAt'] != null ? (data['arrivedAtPickupAt'] as Timestamp).toDate() : null,
+      arrivedAtStoreAt: data['arrivedAtStoreAt'] != null ? (data['arrivedAtStoreAt'] as Timestamp).toDate() : null,
       shoppingStartedAt: data['shoppingStartedAt'] != null ? (data['shoppingStartedAt'] as Timestamp).toDate() : null,
       purchaseCompletedAt: data['purchaseCompletedAt'] != null ? (data['purchaseCompletedAt'] as Timestamp).toDate() : null,
       deliveryStartedAt: data['deliveryStartedAt'] != null ? (data['deliveryStartedAt'] as Timestamp).toDate() : null,
@@ -113,10 +126,14 @@ class PasaBuyModel {
     switch (status) {
       case 'accepted':
         return PasaBuyStatus.accepted;
-      case 'driver_on_way':
-        return PasaBuyStatus.driver_on_way;
-      case 'arrived_pickup':
-        return PasaBuyStatus.arrived_pickup;
+      case 'driver_going_to_pickup':
+        return PasaBuyStatus.driver_going_to_pickup;
+      case 'arrived_at_pickup':
+        return PasaBuyStatus.arrived_at_pickup;
+      case 'driver_going_to_store':
+        return PasaBuyStatus.driver_going_to_store;
+      case 'arrived_at_store':
+        return PasaBuyStatus.arrived_at_store;
       case 'delivery_in_progress':
         return PasaBuyStatus.delivery_in_progress;
       case 'completed':
@@ -135,6 +152,8 @@ class PasaBuyModel {
       'passengerPhone': passengerPhone,
       'pickupLocation': pickupLocation,
       'pickupAddress': pickupAddress,
+      'storeLocation': storeLocation,
+      'storeAddress': storeAddress,
       'dropoffLocation': dropoffLocation,
       'dropoffAddress': dropoffAddress,
       'itemDescription': itemDescription,
@@ -163,6 +182,8 @@ class PasaBuyModel {
     List<String>? declinedBy,
     PasaBuyStatus? status,
     DateTime? acceptedAt,
+    DateTime? arrivedAtPickupAt,
+    DateTime? arrivedAtStoreAt,
     DateTime? completedAt,
     DateTime? expiresAt,
     bool? isRated,
@@ -175,6 +196,8 @@ class PasaBuyModel {
       passengerPhone: passengerPhone,
       pickupLocation: pickupLocation,
       pickupAddress: pickupAddress,
+      storeLocation: storeLocation,
+      storeAddress: storeAddress,
       dropoffLocation: dropoffLocation,
       dropoffAddress: dropoffAddress,
       itemDescription: itemDescription,
@@ -187,6 +210,8 @@ class PasaBuyModel {
       declinedBy: declinedBy ?? this.declinedBy,
       createdAt: createdAt,
       acceptedAt: acceptedAt ?? this.acceptedAt,
+      arrivedAtPickupAt: arrivedAtPickupAt ?? this.arrivedAtPickupAt,
+      arrivedAtStoreAt: arrivedAtStoreAt ?? this.arrivedAtStoreAt,
       completedAt: completedAt ?? this.completedAt,
       expiresAt: expiresAt ?? this.expiresAt,
       barangayId: barangayId,

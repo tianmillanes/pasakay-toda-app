@@ -214,8 +214,10 @@ class BarangayService {
         }
       }
 
-      // 2. Add missing barangays
+      // 2. Add missing barangays AND update existing ones missing terminal geofences
       final targetBarangays = _getConceptionBarangays();
+      int updatedCount = 0;
+      
       for (var target in targetBarangays) {
         final targetName = target.name.toLowerCase().trim();
         
@@ -226,14 +228,40 @@ class BarangayService {
           batch.set(docRef, target.toFirestore());
           addedCount++;
           changesMade = true;
+        } else {
+          // Check if existing barangay is missing terminal geofence
+          final existingDoc = nameToDocs[targetName]!.first;
+          final existingData = existingDoc.data() as Map<String, dynamic>;
+          
+          // Check if terminalGeofenceCoordinates is missing or empty
+          final terminalGeofence = existingData['terminalGeofenceCoordinates'];
+          final hasTerminalGeofence = terminalGeofence != null && 
+              (terminalGeofence is List) && 
+              terminalGeofence.isNotEmpty;
+          
+          if (!hasTerminalGeofence) {
+            // Update existing barangay to add terminal geofence
+            print('🔄 Updating ${target.name} - adding missing terminal geofence');
+            final docRef = _firestore.collection(_collection).doc(existingDoc.id);
+            batch.update(docRef, {
+              'terminalGeofenceCoordinates': target.terminalGeofenceCoordinates?.map((coord) => {
+                'lat': coord[0],
+                'lng': coord[1],
+              }).toList(),
+              'latitude': target.latitude,
+              'longitude': target.longitude,
+            });
+            updatedCount++;
+            changesMade = true;
+          }
         }
       }
 
       if (changesMade) {
         await batch.commit();
-        // Barangay initialization complete: Removed $duplicatesRemoved duplicates, Added $addedCount.
+        print('✅ Barangay initialization complete: Removed $duplicatesRemoved duplicates, Added $addedCount, Updated $updatedCount with terminal geofences.');
       } else {
-        // Barangay data is clean and complete. No changes needed.
+        print('✅ Barangay data is clean and complete. No changes needed.');
       }
 
     } catch (e) {
@@ -241,6 +269,12 @@ class BarangayService {
     } finally {
       _initializationInProgress = false;
     }
+  }
+
+  /// Helper function to create a smaller terminal geofence around a center point
+  /// Radius in degrees (approximately 0.002 degree = 220 meters)
+  List<List<double>> _createTerminalGeofence(double lat, double lng) {
+    return _createGeofence(lat, lng, radiusDegrees: 0.002);
   }
 
   /// Helper function to create a square geofence around a center point
@@ -275,6 +309,7 @@ class BarangayService {
         longitude: baseLongitude,
         createdAt: now,
         geofenceCoordinates: _createGeofence(baseLatitude, baseLongitude),
+        terminalGeofenceCoordinates: _createTerminalGeofence(baseLatitude, baseLongitude),
       ),
       BarangayModel(
         id: 'barangay_2',
@@ -285,6 +320,10 @@ class BarangayService {
         longitude: baseLongitude,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude + 0.01,
+          baseLongitude,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude + 0.01,
           baseLongitude,
         ),
@@ -301,6 +340,10 @@ class BarangayService {
           baseLatitude + 0.02,
           baseLongitude,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude + 0.02,
+          baseLongitude,
+        ),
       ),
       BarangayModel(
         id: 'barangay_4',
@@ -311,6 +354,10 @@ class BarangayService {
         longitude: baseLongitude,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude + 0.03,
+          baseLongitude,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude + 0.03,
           baseLongitude,
         ),
@@ -327,6 +374,10 @@ class BarangayService {
           baseLatitude + 0.05,
           baseLongitude,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude + 0.05,
+          baseLongitude,
+        ),
       ),
       BarangayModel(
         id: 'barangay_7',
@@ -337,6 +388,10 @@ class BarangayService {
         longitude: baseLongitude + 0.01,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude,
+          baseLongitude + 0.01,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude,
           baseLongitude + 0.01,
         ),
@@ -353,6 +408,10 @@ class BarangayService {
           baseLatitude,
           baseLongitude + 0.02,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude,
+          baseLongitude + 0.02,
+        ),
       ),
       BarangayModel(
         id: 'barangay_9',
@@ -363,6 +422,10 @@ class BarangayService {
         longitude: baseLongitude + 0.03,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude,
+          baseLongitude + 0.03,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude,
           baseLongitude + 0.03,
         ),
@@ -379,6 +442,10 @@ class BarangayService {
           baseLatitude,
           baseLongitude + 0.04,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude,
+          baseLongitude + 0.04,
+        ),
       ),
       BarangayModel(
         id: 'barangay_11',
@@ -389,6 +456,10 @@ class BarangayService {
         longitude: baseLongitude + 0.05,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude,
+          baseLongitude + 0.05,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude,
           baseLongitude + 0.05,
         ),
@@ -405,6 +476,10 @@ class BarangayService {
           baseLatitude - 0.01,
           baseLongitude,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude - 0.01,
+          baseLongitude,
+        ),
       ),
       BarangayModel(
         id: 'barangay_13',
@@ -415,6 +490,10 @@ class BarangayService {
         longitude: baseLongitude,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude - 0.02,
+          baseLongitude,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude - 0.02,
           baseLongitude,
         ),
@@ -431,6 +510,10 @@ class BarangayService {
           baseLatitude - 0.03,
           baseLongitude,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude - 0.03,
+          baseLongitude,
+        ),
       ),
       BarangayModel(
         id: 'barangay_15',
@@ -441,6 +524,10 @@ class BarangayService {
         longitude: baseLongitude,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude - 0.04,
+          baseLongitude,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude - 0.04,
           baseLongitude,
         ),
@@ -457,6 +544,10 @@ class BarangayService {
           baseLatitude - 0.05,
           baseLongitude,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude - 0.05,
+          baseLongitude,
+        ),
       ),
       BarangayModel(
         id: 'barangay_17',
@@ -467,6 +558,10 @@ class BarangayService {
         longitude: baseLongitude - 0.01,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude,
+          baseLongitude - 0.01,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude,
           baseLongitude - 0.01,
         ),
@@ -483,6 +578,10 @@ class BarangayService {
           baseLatitude,
           baseLongitude - 0.02,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude,
+          baseLongitude - 0.02,
+        ),
       ),
       BarangayModel(
         id: 'barangay_19',
@@ -493,6 +592,10 @@ class BarangayService {
         longitude: baseLongitude - 0.03,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude,
+          baseLongitude - 0.03,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude,
           baseLongitude - 0.03,
         ),
@@ -509,6 +612,10 @@ class BarangayService {
           baseLatitude,
           baseLongitude - 0.04,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude,
+          baseLongitude - 0.04,
+        ),
       ),
       BarangayModel(
         id: 'barangay_21',
@@ -519,6 +626,10 @@ class BarangayService {
         longitude: baseLongitude - 0.05,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude,
+          baseLongitude - 0.05,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude,
           baseLongitude - 0.05,
         ),
@@ -535,6 +646,10 @@ class BarangayService {
           baseLatitude + 0.01,
           baseLongitude + 0.01,
         ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
+          baseLatitude + 0.01,
+          baseLongitude + 0.01,
+        ),
       ),
       BarangayModel(
         id: 'barangay_23',
@@ -545,6 +660,10 @@ class BarangayService {
         longitude: baseLongitude + 0.01,
         createdAt: now,
         geofenceCoordinates: _createGeofence(
+          baseLatitude + 0.02,
+          baseLongitude + 0.01,
+        ),
+        terminalGeofenceCoordinates: _createTerminalGeofence(
           baseLatitude + 0.02,
           baseLongitude + 0.01,
         ),
